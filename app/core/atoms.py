@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 
 @dataclass
 class ResearchAtom:
@@ -13,3 +13,6 @@ class ResearchAtom:
     claims: list[str]
     embedding: list[float] | None = None
     arxiv_status: str = "raw"
+
+    def to_dict(self) -> dict:
+        return asdict(self)

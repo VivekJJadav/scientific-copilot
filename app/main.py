@@ -17,12 +17,13 @@ structlog.configure(
     cache_logger_on_first_use=True,
 )
 
-from app.api.routes import ingest, papers
+from app.api.routes import ingest, papers, hypotheses
 
-app = FastAPI(title="Scientific Copilot API", version="0.1.0")
+app = FastAPI(title="Scientific Copilot API", version="0.2.0")
 
 app.include_router(ingest.router, prefix="/ingest", tags=["ingestion"])
 app.include_router(papers.router, prefix="/papers", tags=["papers"])
+app.include_router(hypotheses.router, tags=["extraction & hypotheses"])
 
 @app.get("/health")
 async def health_check():
