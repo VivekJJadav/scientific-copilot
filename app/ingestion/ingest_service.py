@@ -34,7 +34,7 @@ async def run_ingestion(db: AsyncSession) -> dict:
                 break
                 
         if is_duplicate:
-            logger.warning("skipped_duplicate_title", arxiv_id=atom.paper_id, title=atom.title)
+            logger.warning("paper_skipped_duplicate", arxiv_id=atom.paper_id, title=atom.title)
             summary["skipped"] += 1
             continue
             
@@ -59,11 +59,11 @@ async def run_ingestion(db: AsyncSession) -> dict:
         await db.commit()
         
         if result.rowcount > 0:
-            logger.info("inserted_paper", arxiv_id=atom.paper_id)
+            logger.info("paper_inserted", arxiv_id=atom.paper_id)
             summary["inserted"] += 1
             existing_titles.append(atom.title)  # Add to existing titles to prevent within-batch duplicates
         else:
-            logger.warning("skipped_arxiv_id_conflict", arxiv_id=atom.paper_id)
+            logger.warning("paper_skipped_duplicate", arxiv_id=atom.paper_id)
             summary["skipped"] += 1
             
     logger.info("ingestion_completed", **summary)

@@ -10,6 +10,7 @@ async def main():
     logger.info("seed_started")
     async with AsyncSession(engine, expire_on_commit=False) as session:
         summary = await run_ingestion(session)
+        print(summary)
         logger.info("seed_completed", **summary)
 
 if __name__ == "__main__":
