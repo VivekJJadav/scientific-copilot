@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     # LLM / Ollama
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     OLLAMA_MODEL: str = "mistral"
-    OLLAMA_TIMEOUT_SECONDS: int = 30
+    OLLAMA_TIMEOUT_SECONDS: int = 300
     LLM_FALLBACK_PROVIDER: str = "groq"
     LLM_FALLBACK_API_KEY: str = ""
 

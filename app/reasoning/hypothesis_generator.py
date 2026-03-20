@@ -153,7 +153,7 @@ class HypothesisGenerator:
                 methods=[],
                 limitations=[],
                 claims=[],
-                embedding=list(p.embedding) if p.embedding else None,
+                embedding=list(p.embedding) if p.embedding is not None else None,
                 arxiv_status=p.arxiv_status,
             )
             for p in papers

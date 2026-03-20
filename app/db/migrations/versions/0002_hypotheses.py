@@ -33,8 +33,8 @@ def upgrade() -> None:
         sa.Column('hardware_requirement', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
         sa.Column('source_paper_ids', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
         sa.Column('gap_description', sa.Text(), nullable=False),
-        sa.Column('status', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
-        sa.Column('iteration_count', sa.Integer(), nullable=False),
+        sa.Column('status', sqlmodel.sql.sqltypes.AutoString(), server_default='pending', nullable=False),
+        sa.Column('iteration_count', sa.Integer(), server_default='0', nullable=False),
         sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
         sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
         sa.PrimaryKeyConstraint('id')
