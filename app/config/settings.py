@@ -22,6 +22,22 @@ class Settings(BaseSettings):
     # Extraction
     EXTRACTION_BATCH_SIZE: int = 10
 
+    # Phase 3: Debate
+    DEBATE_MAX_ROUNDS: int = 3
+    DEBATE_NOVELTY_MIN: float = 0.6
+    DEBATE_FEASIBILITY_MIN: float = 0.5
+
+    # Phase 3: Execution Sandbox
+    SANDBOX_CPU_LIMIT: str = "2.0"
+    SANDBOX_MEMORY_LIMIT: str = "4g"
+    SANDBOX_TIMEOUT_SECONDS: int = 3600
+    EXPERIMENT_OUTPUT_DIR: str = "./experiments"
+
+    # Phase 3: Tracking
+    WANDB_API_KEY: str = ""
+    MLFLOW_TRACKING_URI: str = "http://localhost:5000"
+    RESULTS_BACKEND: str = "local"  # "wandb" | "mlflow" | "local"
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 settings = Settings()

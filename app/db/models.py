@@ -40,5 +40,30 @@ class HypothesisModel(SQLModel, table=True):
     gap_description: str = Field(sa_column=Column(Text, nullable=False))
     status: str = Field(default="pending")
     iteration_count: int = Field(default=0, sa_column=Column(Integer, nullable=False))
+    
+    # Phase 3 Fields
+    approved_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True)))
+    rejection_reason: Optional[str] = Field(default=None, sa_column=Column(Text))
+    debate_rounds: Optional[int] = Field(default=None, sa_column=Column(Integer))
+    arbiter_notes: Optional[str] = Field(default=None, sa_column=Column(Text))
+    
     created_at: datetime = Field(default_factory=datetime.utcnow, sa_column=Column(DateTime(timezone=True), nullable=False))
     updated_at: datetime = Field(default_factory=datetime.utcnow, sa_column=Column(DateTime(timezone=True), nullable=False, onupdate=datetime.utcnow))
+
+
+class Experiment(SQLModel, table=True):
+    __tablename__ = "experiments"
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    hypothesis_id: uuid.UUID = Field(foreign_key="hypotheses.id", nullable=False)
+    status: str = Field(default="queued")
+    experiment_dir: str = Field(nullable=False)
+    container_id: Optional[str] = Field(default=None)
+    results: Optional[dict] = Field(default=None, sa_column=Column(JSONB))
+    result_summary: Optional[str] = Field(default=None, sa_column=Column(Text))
+    wandb_run_url: Optional[str] = Field(default=None)
+    mlflow_run_id: Optional[str] = Field(default=None)
+    error_log: Optional[str] = Field(default=None, sa_column=Column(Text))
+    started_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True)))
+    completed_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True)))
+    created_at: datetime = Field(default_factory=datetime.utcnow, sa_column=Column(DateTime(timezone=True), nullable=False))
