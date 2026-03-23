@@ -18,8 +18,9 @@ structlog.configure(
 )
 
 from app.api.routes import ingest, papers, hypotheses, debate, review, experiments
+from app.api.routes import feedback, clustering
 
-app = FastAPI(title="Scientific Copilot API", version="0.3.0")
+app = FastAPI(title="Scientific Copilot API", version="0.4.0")
 
 app.include_router(ingest.router, prefix="/ingest", tags=["ingestion"])
 app.include_router(papers.router, prefix="/papers", tags=["papers"])
@@ -27,6 +28,9 @@ app.include_router(hypotheses.router, tags=["extraction & hypotheses"])
 app.include_router(debate.router, prefix="/debate", tags=["debate"])
 app.include_router(review.router, prefix="/review", tags=["review"])
 app.include_router(experiments.router, prefix="/experiments", tags=["experiments"])
+app.include_router(feedback.router, prefix="/feedback", tags=["feedback"])
+app.include_router(clustering.router, prefix="/clustering", tags=["clustering"])
+
 
 @app.get("/health")
 async def health_check():

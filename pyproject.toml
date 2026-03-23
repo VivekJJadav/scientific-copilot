@@ -26,6 +26,9 @@ dependencies = [
     "docker>=7.1.0",
     "wandb>=0.25.1",
     "mlflow>=3.10.1",
+    "hdbscan>=0.8.33",
+    "scikit-learn>=1.5.0",
+    "numpy>=1.26.0",
 ]
 
 [project.optional-dependencies]

@@ -3,7 +3,7 @@ import json
 import structlog
 from app.debate.state import DebateState
 from app.llm.router import LLMRouter
-from app.llm.prompts import PROPOSER_PROMPT, CRITIC_PROMPT, REBUTTAL_PROMPT, ARBITER_PROMPT
+from app.llm.prompts import PROPOSER_PROMPT, CRITIC_PROMPT, REBUTTAL_PROMPT, ARBITER_PROMPT, build_arbiter_prompt_with_examples
 from app.config.settings import settings
 
 logger = structlog.get_logger(__name__)
@@ -114,15 +114,33 @@ async def arbiter_node(state: DebateState) -> DebateState:
     
     hypothesis = state["hypothesis"]
     
-    prompt = ARBITER_PROMPT.format(
+    # Load few-shot examples from past outcomes for Arbiter calibration
+    from app.feedback.arbiter_trainer import ArbiterTrainer
+    from app.db.session import get_session
+    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.orm import sessionmaker
+    from app.db.session import engine
+    
+    few_shot_examples = []
+    try:
+        async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        async with async_session() as db:
+            trainer = ArbiterTrainer()
+            few_shot_examples = await trainer.get_few_shot_examples(db)
+    except Exception as e:
+        logger.warning("arbiter_few_shot_load_failed", error=str(e))
+    
+    # Build prompt with or without few-shot examples
+    prompt = build_arbiter_prompt_with_examples(
         hypothesis_title=hypothesis.title,
         core_claim=hypothesis.core_claim,
         novelty_score=hypothesis.novelty_score,
         feasibility_score=hypothesis.feasibility_score,
         proposal=state["proposal"],
-        critiques="\n\n".join(state.get("critiques", [])),
-        rebuttals="\n\n".join(state.get("rebuttals", [])),
-        hardware_requirement=hypothesis.hardware_requirement
+        critiques=state.get("critiques", []),
+        rebuttals=state.get("rebuttals", []),
+        hardware_requirement=hypothesis.hardware_requirement,
+        few_shot_examples=few_shot_examples,
     )
     
     response = await llm.complete(prompt, expect_json=True, force_json_object=True)
@@ -169,7 +187,9 @@ async def arbiter_node(state: DebateState) -> DebateState:
         round=state["round"],
         latency=time.monotonic() - start_time,
         hypothesis_id=state["hypothesis_id"],
-        verdict=verdict
+        verdict=verdict,
+        few_shot_count=len(few_shot_examples),
     )
     
     return state
+

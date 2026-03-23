@@ -138,3 +138,99 @@ Respond in JSON only:
   "rejection_reason": "..." | null,
   "arbiter_notes": "..."
 }}"""
+
+# ─── Phase 4 Prompts ───────────────────────────────────────────────────────────
+
+RESULT_ANALYSIS_PROMPT = """You are a research analyst reviewing the results of a machine learning experiment.
+
+Hypothesis tested: {hypothesis_title}
+Core claim: {core_claim}
+Expected outcome: {expected_outcome}
+Actual results: {results}
+
+Determine:
+1. Outcome: did the results validate, fail to support, or inconclusively test the core claim?
+2. Lessons learned: what specific insights does this result provide for future research?
+3. If failed: what was the most likely reason for failure?
+
+Respond in JSON only:
+{{
+  "outcome": "validated" | "failed" | "inconclusive",
+  "result_summary": "...",
+  "lessons_learned": ["...", "..."],
+  "failure_reason": "..." | null
+}}"""
+
+NEGATIVE_RESULT_GAP_PROMPT = """You are a research scientist. An experiment just failed with the following findings:
+
+Hypothesis: {hypothesis_title}
+Core claim: {core_claim}
+Failure reason: {failure_reason}
+Lessons learned: {lessons_learned}
+
+A failed experiment is valuable data. Based on this failure, identify one new research gap it reveals — something that could be tested differently or under different conditions to understand why it failed.
+
+Respond in JSON only:
+{{
+  "gap_description": "...",
+  "gap_type": "untested_combination | missing_benchmark | scalability | generalization | negative_result",
+  "suggested_direction": "..."
+}}"""
+
+DATASET_EXTRACTION_PROMPT = """You are a research data analyst. From the following paper abstract and methods, extract the names of any datasets or benchmarks used or referenced.
+
+Title: {title}
+Abstract: {abstract}
+Methods: {methods}
+
+Return only dataset and benchmark names that are proper nouns — named datasets like "Atari", "MuJoCo", "GLUE", "ImageNet", "OpenAI Gym", "D4RL". Do not include generic terms like "training data" or "test set".
+
+Respond in JSON only:
+{{
+  "datasets": ["...", "..."]
+}}"""
+
+ARBITER_FEW_SHOT_PREFIX = """Before evaluating this debate, here are examples of past hypotheses and their experimental outcomes to calibrate your scoring:
+
+{few_shot_examples}
+
+Use these examples to inform your scoring — hypotheses similar to validated ones should score higher on feasibility, hypotheses similar to failed ones should have their risk factors weighted more heavily.
+
+"""
+
+
+def build_arbiter_prompt_with_examples(
+    hypothesis_title: str,
+    core_claim: str,
+    novelty_score: float,
+    feasibility_score: float,
+    proposal: str,
+    critiques: list[str],
+    rebuttals: list[str],
+    hardware_requirement: str,
+    few_shot_examples: list[dict],
+) -> str:
+    """Build the full Arbiter prompt, prepending few-shot prefix only when examples exist."""
+    prefix = ""
+    if few_shot_examples:
+        examples_block = ""
+        for ex in few_shot_examples:
+            examples_block += (
+                f"- Title: {ex.get('hypothesis_title', 'N/A')}\n"
+                f"  Claim: {ex.get('core_claim', 'N/A')}\n"
+                f"  Outcome: {ex.get('outcome', 'N/A')}\n"
+                f"  Summary: {ex.get('result_summary', 'N/A')}\n\n"
+            )
+        prefix = ARBITER_FEW_SHOT_PREFIX.format(few_shot_examples=examples_block)
+
+    base = ARBITER_PROMPT.format(
+        hypothesis_title=hypothesis_title,
+        core_claim=core_claim,
+        novelty_score=novelty_score,
+        feasibility_score=feasibility_score,
+        proposal=proposal,
+        critiques="\n\n".join(critiques),
+        rebuttals="\n\n".join(rebuttals),
+        hardware_requirement=hardware_requirement,
+    )
+    return prefix + base

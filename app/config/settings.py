@@ -38,6 +38,14 @@ class Settings(BaseSettings):
     MLFLOW_TRACKING_URI: str = "http://localhost:5000"
     RESULTS_BACKEND: str = "local"  # "wandb" | "mlflow" | "local"
 
+    # Phase 4: Feedback Loop & Clustering
+    HDBSCAN_MIN_CLUSTER_SIZE: int = 3
+    HDBSCAN_MIN_SAMPLES: int = 2
+    GAP_SIMILARITY_THRESHOLD: float = 0.75
+    FEEDBACK_MIN_EXPERIMENTS: int = 1
+    ARBITER_FEW_SHOT_LIMIT: int = 5
+    DATASET_MIN_MENTIONS: int = 2
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 settings = Settings()

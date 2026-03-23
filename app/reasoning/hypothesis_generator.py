@@ -10,7 +10,7 @@ from sqlalchemy import text, func
 
 from app.config.settings import settings
 from app.core.atoms import ResearchAtom
-from app.db.models import Paper, HypothesisModel
+from app.db.models import Paper, HypothesisModel, Gap, DatasetRegistry
 from app.llm.router import LLMRouter, LLMUnavailableError
 from app.llm.prompts import HYPOTHESIS_GENERATION_PROMPT, NOVELTY_CHECK_PROMPT
 from app.reasoning.hypothesis import Hypothesis
@@ -60,8 +60,14 @@ class HypothesisGenerator:
             logger.warning("hypothesis_no_sources", gap=gap.get("description", ""))
             return None
 
+        # Inject dataset context from registry
+        ds_context = await self._get_dataset_context(db)
+        gap_desc = gap.get("description", "")
+        if ds_context:
+            gap_desc += f"\n\nRecommended datasets/benchmarks: {ds_context}"
+
         prompt = HYPOTHESIS_GENERATION_PROMPT.format(
-            gap_description=gap.get("description", ""),
+            gap_description=gap_desc,
             paper_summaries=paper_summaries,
             max_compute=settings.MAX_COMPUTE,
         )
@@ -134,7 +140,10 @@ class HypothesisGenerator:
             return None
 
     async def run_generation_pipeline(self, db: AsyncSession) -> dict:
-        """Full pipeline: fetch processed papers → extract gaps → generate hypotheses.
+        """Full pipeline: fetch gaps → generate hypotheses.
+
+        Prioritizes unused gaps from the gaps table, then falls back to
+        extracting new gaps from processed papers.
 
         Returns:
             Summary dict: {"gaps_found": n, "hypotheses_generated": n, "hypotheses_discarded": n}
@@ -145,19 +154,69 @@ class HypothesisGenerator:
         embed_result = await self.embedder.embed_papers(db)
         logger.info("embedding_step_complete", **embed_result)
 
-        # Fetch all processed or embedded papers
-        stmt = select(Paper).where(
+        # Fetch unused gaps from DB first (these come from clustering + feedback)
+        stmt = select(Gap).where(Gap.used == False).limit(5)  # noqa: E712
+        db_gaps = (await db.execute(stmt)).scalars().all()
+
+        # Convert DB gaps to dicts
+        gaps = []
+        gap_models = {}
+        for g in db_gaps:
+            gap_dict = {
+                "description": g.gap_description,
+                "source_paper_ids": g.source_paper_ids or [],
+                "gap_type": g.gap_type,
+            }
+            gaps.append(gap_dict)
+            gap_models[g.gap_description] = g
+
+        # If no unused gaps, extract new ones from papers
+        if not gaps:
+            papers_stmt = select(Paper).where(
+                Paper.arxiv_status.in_(["processed", "embedded"])
+            )
+            result = await db.execute(papers_stmt)
+            papers = result.scalars().all()
+
+            if papers:
+                atoms = [
+                    ResearchAtom(
+                        paper_id=p.arxiv_id,
+                        title=p.title,
+                        abstract=p.abstract,
+                        authors=p.authors or [],
+                        published_year=p.published_year,
+                        pdf_url=p.pdf_url,
+                        methods=[],
+                        limitations=[],
+                        claims=[],
+                        embedding=[float(x) for x in p.embedding] if p.embedding is not None else None,
+                        arxiv_status=p.arxiv_status,
+                    )
+                    for p in papers
+                ]
+                gaps = await self.gap_extractor.extract_gaps(atoms, settings.ARXIV_QUERY)
+
+                # Also find cluster-aware gaps
+                cluster_gaps = await self.gap_extractor.find_gaps_from_clusters(db)
+                gaps = cluster_gaps + gaps
+
+        summary = {
+            "gaps_found": len(gaps),
+            "hypotheses_generated": 0,
+            "hypotheses_discarded": 0,
+        }
+
+        if not gaps:
+            logger.info("hypothesis_pipeline_no_gaps")
+            return summary
+
+        # Fetch all papers for atom building
+        all_papers_stmt = select(Paper).where(
             Paper.arxiv_status.in_(["processed", "embedded"])
         )
-        result = await db.execute(stmt)
-        papers = result.scalars().all()
-
-        if not papers:
-            logger.info("hypothesis_pipeline_no_processed_papers")
-            return {"gaps_found": 0, "hypotheses_generated": 0, "hypotheses_discarded": 0}
-
-        # Convert to atoms
-        atoms = [
+        all_papers = (await db.execute(all_papers_stmt)).scalars().all()
+        all_atoms = [
             ResearchAtom(
                 paper_id=p.arxiv_id,
                 title=p.title,
@@ -168,37 +227,46 @@ class HypothesisGenerator:
                 methods=[],
                 limitations=[],
                 claims=[],
-                embedding=list(p.embedding) if p.embedding is not None else None,
+                embedding=[float(x) for x in p.embedding] if p.embedding is not None else None,
                 arxiv_status=p.arxiv_status,
             )
-            for p in papers
+            for p in all_papers
         ]
-
-        # Extract gaps
-        gaps = await self.gap_extractor.extract_gaps(atoms, settings.ARXIV_QUERY)
-
-        summary = {
-            "gaps_found": len(gaps),
-            "hypotheses_generated": 0,
-            "hypotheses_discarded": 0,
-        }
 
         # Generate hypotheses for top 3 gaps
         for gap in gaps[:3]:
             # Find source atoms for this gap
             source_ids = gap.get("source_paper_ids", [])
-            source_atoms = [a for a in atoms if a.paper_id in source_ids]
+            source_atoms = [a for a in all_atoms if a.paper_id in source_ids]
             if not source_atoms:
-                source_atoms = atoms[:5]  # fallback: use first 5
+                source_atoms = all_atoms[:5]  # fallback: use first 5
 
             hypothesis = await self.generate(gap, source_atoms, db)
             if hypothesis:
                 summary["hypotheses_generated"] += 1
+                # Mark the gap as used if it came from DB
+                gap_desc = gap.get("description", "")
+                if gap_desc in gap_models:
+                    gap_models[gap_desc].used = True
             else:
                 summary["hypotheses_discarded"] += 1
 
+        # Commit gap used=true updates
+        await db.commit()
+
         logger.info("hypothesis_generation_pipeline_completed", **summary)
         return summary
+
+    async def _get_dataset_context(self, db: AsyncSession) -> str:
+        """Fetch top datasets from registry for injection into prompts."""
+        stmt = (
+            select(DatasetRegistry.name)
+            .where(DatasetRegistry.mention_count >= settings.DATASET_MIN_MENTIONS)
+            .order_by(DatasetRegistry.mention_count.desc())
+            .limit(5)
+        )
+        names = (await db.execute(stmt)).scalars().all()
+        return ", ".join(names) if names else ""
 
     async def _check_novelty(self, hypothesis: Hypothesis, db: AsyncSession) -> float:
         """Check novelty of a hypothesis against existing ones."""
