@@ -39,13 +39,26 @@ class HypothesisGenerator:
         # Build paper summaries for context
         paper_summaries = self._build_paper_summaries(source_atoms)
 
+        # Keep track of all source paper IDs
+        source_ids = set()
+        for atom in source_atoms:
+            source_ids.add(atom.paper_id)
+        for gap_id in gap.get("source_paper_ids", []):
+            source_ids.add(gap_id)
+
         # Retrieve top-5 similar papers via pgvector for grounding
-        rag_context = await self._retrieve_similar_papers(
+        rag_context, rag_ids = await self._retrieve_similar_papers(
             gap.get("description", ""), db
         )
         if rag_context:
             paper_summaries += "\n\nAdditional related papers (retrieved by similarity):\n"
             paper_summaries += rag_context
+            for ret_id in rag_ids:
+                source_ids.add(ret_id)
+
+        if not source_ids:
+            logger.warning("hypothesis_no_sources", gap=gap.get("description", ""))
+            return None
 
         prompt = HYPOTHESIS_GENERATION_PROMPT.format(
             gap_description=gap.get("description", ""),
@@ -54,7 +67,9 @@ class HypothesisGenerator:
         )
 
         try:
-            response = await self.llm.complete(prompt, expect_json=True)
+            response = await self.llm.complete(
+                prompt, expect_json=True, force_json_object=True
+            )
             parsed = json.loads(response)
 
             hypothesis = Hypothesis(
@@ -68,7 +83,7 @@ class HypothesisGenerator:
                 novelty_score=parsed.get("novelty_score", 0.0),
                 feasibility_score=parsed.get("feasibility_score", 0.0),
                 hardware_requirement=parsed.get("hardware_requirement", ""),
-                source_paper_ids=gap.get("source_paper_ids", []),
+                source_paper_ids=list(source_ids),
                 gap_description=gap.get("description", ""),
                 status="pending",
                 iteration_count=0,
@@ -224,7 +239,7 @@ class HypothesisGenerator:
 
     async def _retrieve_similar_papers(
         self, query_text: str, db: AsyncSession
-    ) -> str:
+    ) -> tuple[str, list[str]]:
         """Retrieve top-5 most similar papers using pgvector cosine similarity."""
         try:
             # Generate embedding for the query
@@ -242,16 +257,18 @@ class HypothesisGenerator:
             papers = result.scalars().all()
 
             if not papers:
-                return ""
+                return "", []
 
             lines = []
+            ids = []
             for p in papers:
                 lines.append(f"[{p.arxiv_id}] {p.title}: {p.abstract[:200]}...")
-            return "\n".join(lines)
+                ids.append(p.arxiv_id)
+            return "\n".join(lines), ids
 
         except Exception as e:
             logger.warning("rag_retrieval_failed", error=str(e))
-            return ""
+            return "", []
 
     async def _persist_hypothesis(self, hypothesis: Hypothesis, db: AsyncSession):
         """Save a Hypothesis to the database."""

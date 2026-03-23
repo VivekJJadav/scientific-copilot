@@ -26,11 +26,11 @@ class GapExtractor:
         Returns:
             List of gap dicts with description, source_paper_ids, gap_type.
         """
-        if len(atoms) < 5:
+        if len(atoms) < 1:
             logger.warning(
                 "gap_extraction_insufficient_papers",
                 paper_count=len(atoms),
-                minimum_required=5,
+                minimum_required=1,
             )
             return []
 
@@ -44,7 +44,9 @@ class GapExtractor:
         )
 
         try:
-            response = await self.llm.complete(prompt, expect_json=True)
+            response = await self.llm.complete(
+                prompt, expect_json=True, force_json_object=True
+            )
             parsed = json.loads(response)
             gaps = parsed.get("gaps", [])
 

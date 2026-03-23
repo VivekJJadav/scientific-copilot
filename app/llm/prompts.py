@@ -17,11 +17,11 @@ Respond in JSON only. No preamble. Format:
   "claims": ["...", "..."]
 }}"""
 
-GAP_EXTRACTION_PROMPT = """You are a research analyst. Below are limitations and future work statements from {n} papers on the topic "{topic}".
+GAP_EXTRACTION_PROMPT = """You are a research analyst. Below are limitations and future work statements from {n} paper(s) on the topic "{topic}".
 
 {limitations_block}
 
-Identify the top 3 most significant research gaps. A gap is something explicitly unresolved, untested, or flagged as future work across multiple papers.
+Identify the top 3 most significant research gaps. A gap is something explicitly unresolved, untested, or flagged as future work in the provided research.
 
 Respond in JSON only. Format:
 {{

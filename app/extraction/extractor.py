@@ -30,7 +30,9 @@ class PaperExtractor:
         """
         try:
             prompt = EXTRACTION_PROMPT.format(abstract=atom.abstract)
-            response = await self.llm.complete(prompt, expect_json=True)
+            response = await self.llm.complete(
+                prompt, expect_json=True, force_json_object=True
+            )
             parsed = json.loads(response)
 
             atom.methods = parsed.get("methods", [])

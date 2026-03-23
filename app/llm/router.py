@@ -29,12 +29,13 @@ class LLMRouter:
         self.fallback_provider = settings.LLM_FALLBACK_PROVIDER
         self.fallback_api_key = settings.LLM_FALLBACK_API_KEY
 
-    async def complete(self, prompt: str, expect_json: bool = False) -> str:
+    async def complete(self, prompt: str, expect_json: bool = False, force_json_object: bool = False) -> str:
         """Send a prompt to the LLM and return the response text.
 
         Args:
             prompt: The prompt string to send.
             expect_json: If True, strip markdown code fences from response.
+            force_json_object: If True, use Ollama's native format='json' (forces {})
 
         Returns:
             The LLM response text.
@@ -44,7 +45,7 @@ class LLMRouter:
         """
         # Try Ollama first
         try:
-            result = await self._call_ollama(prompt)
+            result = await self._call_ollama(prompt, force_json_object)
             if expect_json:
                 result = self._strip_code_fences(result)
             return result
@@ -76,17 +77,21 @@ class LLMRouter:
             "or provide a valid LLM_FALLBACK_API_KEY."
         )
 
-    async def _call_ollama(self, prompt: str) -> str:
+    async def _call_ollama(self, prompt: str, force_json_object: bool = False) -> str:
         """Call Ollama's generate API."""
         start = time.monotonic()
+        payload = {
+            "model": self.ollama_model,
+            "prompt": prompt,
+            "stream": False,
+        }
+        if force_json_object:
+            payload["format"] = "json"
+            
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             response = await client.post(
                 f"{self.ollama_base_url}/api/generate",
-                json={
-                    "model": self.ollama_model,
-                    "prompt": prompt,
-                    "stream": False,
-                },
+                json=payload,
             )
             response.raise_for_status()
             data = response.json()
@@ -127,14 +132,33 @@ class LLMRouter:
 
     @staticmethod
     def _strip_code_fences(text: str) -> str:
-        """Remove markdown code fences from LLM responses.
-
-        Models sometimes wrap JSON in ```json ... ``` blocks.
-        """
+        """Remove markdown code fences and conversational filler from LLM responses."""
         text = text.strip()
-        # Remove ```json ... ``` or ``` ... ```
-        pattern = r"^```(?:json)?\s*\n?(.*?)\n?\s*```$"
-        match = re.match(pattern, text, re.DOTALL)
-        if match:
-            return match.group(1).strip()
+        
+        # Find the first { or [ and the last } or ]
+        first_brace = text.find('{')
+        first_bracket = text.find('[')
+        
+        start_idx = -1
+        if first_brace != -1 and first_bracket != -1:
+            start_idx = min(first_brace, first_bracket)
+        elif first_brace != -1:
+            start_idx = first_brace
+        elif first_bracket != -1:
+            start_idx = first_bracket
+            
+        last_brace = text.rfind('}')
+        last_bracket = text.rfind(']')
+        
+        end_idx = -1
+        if last_brace != -1 and last_bracket != -1:
+            end_idx = max(last_brace, last_bracket)
+        elif last_brace != -1:
+            end_idx = last_brace
+        elif last_bracket != -1:
+            end_idx = last_bracket
+            
+        if start_idx != -1 and end_idx != -1 and end_idx >= start_idx:
+            return text[start_idx:end_idx + 1]
+            
         return text
