@@ -6,6 +6,6 @@ from app.ingestion.ingest_service import run_ingestion
 router = APIRouter()
 
 @router.post("/arxiv")
-async def ingest_arxiv(db: AsyncSession = Depends(get_session)):
-    summary = await run_ingestion(db)
+async def ingest_arxiv(limit: int = 10, db: AsyncSession = Depends(get_session)):
+    summary = await run_ingestion(db, limit=limit)
     return summary

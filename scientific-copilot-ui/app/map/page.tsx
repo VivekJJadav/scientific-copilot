@@ -8,14 +8,16 @@ import { runExtraction } from '@/lib/api/hypotheses'
 import { toast } from 'sonner'
 import { Loader2, Download, Cpu } from 'lucide-react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useState } from 'react'
 
 export default function MapPage() {
+  const [fetchLimit, setFetchLimit] = useState(10)
   const isRunning = useMapStore((s: any) => s.isRunning)
   const setIsRunning = useMapStore((s: any) => s.setIsRunning)
   const queryClient = useQueryClient()
 
   const ingestMutation = useMutation({
-    mutationFn: ingestPapers,
+    mutationFn: (limit: number) => ingestPapers(limit),
     onMutate: () => setIsRunning(true),
     onSuccess: (data: any) => {
       toast.success(`Fetched ${data.fetched} papers: ${data.inserted} new, ${data.skipped} skipped`)
@@ -39,8 +41,19 @@ export default function MapPage() {
   return (
     <div className="flex h-screen flex-col">
       <TopBar title="Research Map">
+        <div className="flex items-center gap-2 mr-4">
+          <span className="text-xs text-gray-500">Limit:</span>
+          <input
+            type="number"
+            min="1"
+            max="50"
+            value={fetchLimit}
+            onChange={(e) => setFetchLimit(parseInt(e.target.value) || 1)}
+            className="w-16 rounded border border-[#333] bg-[#111] px-2 py-1 text-xs text-white focus:border-indigo-500 focus:outline-none"
+          />
+        </div>
         <button
-          onClick={() => ingestMutation.mutate()}
+          onClick={() => ingestMutation.mutate(fetchLimit)}
           disabled={isRunning}
           className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-500 disabled:opacity-50"
         >

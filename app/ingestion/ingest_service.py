@@ -12,11 +12,12 @@ from app.ingestion.arxiv_client import fetch_papers
 
 logger = structlog.get_logger(__name__)
 
-async def run_ingestion(db: AsyncSession) -> dict:
+async def run_ingestion(db: AsyncSession, limit: int = None) -> dict:
     logger.info("ingestion_started", query=settings.ARXIV_QUERY)
     
     # Fetch from ArXiv
-    atoms = await fetch_papers(settings.ARXIV_QUERY, settings.ARXIV_MAX_RESULTS)
+    fetch_limit = limit or settings.ARXIV_MAX_RESULTS
+    atoms = await fetch_papers(settings.ARXIV_QUERY, fetch_limit)
     
     # Fetch existing titles for deduplication
     result = await db.execute(select(Paper.title))

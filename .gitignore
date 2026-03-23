@@ -35,3 +35,9 @@ logs/
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Project-specific
+experiments/
+scientific-copilot-ui/.next/
+scientific-copilot-ui/node_modules/
+scientific-copilot-ui/out/

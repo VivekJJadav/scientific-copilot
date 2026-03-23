@@ -14,7 +14,7 @@ export const getPaper = async (id: string): Promise<Paper> => {
   return data
 }
 
-export const ingestPapers = async (): Promise<{ fetched: number; inserted: number; skipped: number }> => {
-  const { data } = await apiClient.post('/ingest/arxiv')
-  return data
+export const ingestPapers = async (limit: number = 10): Promise<{ fetched: number; inserted: number; skipped: number }> => {
+  const response = await apiClient.post('/ingest/arxiv', null, { params: { limit } })
+  return response.data
 }
