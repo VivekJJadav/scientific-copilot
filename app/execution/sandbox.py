@@ -34,25 +34,28 @@ class ExperimentSandbox:
             # Volume mount has to be absolute path ON THE HOST because we are using the host's docker daemon
             abs_exp_dir = os.path.abspath(experiment.experiment_dir)
             
-            host_project_dir = os.environ.get("HOST_PROJECT_DIR", "/Users/vicky/Desktop/scientific-copilot")
-            # If inside container, abs_exp_dir starts with /app. We find relative path to /app or cwd
+            # Get project root from env or default to current directory
+            host_project_dir = os.environ.get("HOST_PROJECT_DIR", os.getcwd())
+            
+            # If inside a container (backend running in docker), we need to find the relative path
+            # from the project root. If running on host, it's just the absolute path.
             if abs_exp_dir.startswith("/app"):
                 rel_path = os.path.relpath(abs_exp_dir, "/app")
+                host_mount_dir = os.path.join(host_project_dir, rel_path)
             else:
-                rel_path = os.path.relpath(abs_exp_dir, os.getcwd())
-                
-            host_mount_dir = os.path.join(host_project_dir, rel_path)
+                # Running directly on host, the absolute path is what we want for volume mount
+                host_mount_dir = abs_exp_dir
+            
+            # Docker Desktop on Windows sometimes requires specific path formats, 
+            # but usually the absolute path works if it's shared.
             
             # Spin up container in detached mode
-            nano_cpus = int(float(settings.SANDBOX_CPU_LIMIT) * 1e9)
             
             container = self.client.containers.run(
                 self.image,
                 command="sh -c 'if [ -f requirements.txt ]; then pip install -r requirements.txt; fi && python evaluate.py'",
                 volumes={host_mount_dir: {'bind': '/app', 'mode': 'rw'}},
                 working_dir='/app',
-                nano_cpus=nano_cpus,
-                mem_limit=settings.SANDBOX_MEMORY_LIMIT,
                 detach=True,
                 remove=False
             )

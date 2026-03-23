@@ -1,4 +1,6 @@
 from fastapi import FastAPI
+# Reload fix
+from fastapi.middleware.cors import CORSMiddleware
 import structlog
 import logging
 
@@ -21,6 +23,14 @@ from app.api.routes import ingest, papers, hypotheses, debate, review, experimen
 from app.api.routes import feedback, clustering
 
 app = FastAPI(title="Scientific Copilot API", version="0.4.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 app.include_router(ingest.router, prefix="/ingest", tags=["ingestion"])
 app.include_router(papers.router, prefix="/papers", tags=["papers"])

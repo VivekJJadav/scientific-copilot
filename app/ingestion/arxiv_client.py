@@ -7,6 +7,7 @@ logger = structlog.get_logger(__name__)
 
 async def fetch_papers(query: str, max_results: int) -> list[ResearchAtom]:
     logger.info("fetching_papers_from_arxiv", query=query, max_results=max_results)
+    print(f"DEBUG: ARXIV_MAX_RESULTS = {max_results}")
     
     def _fetch():
         client = arxiv.Client()
