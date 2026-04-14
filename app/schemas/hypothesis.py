@@ -21,6 +21,12 @@ class HypothesisResponse(BaseModel):
     gap_description: str
     status: str
     iteration_count: int
+    # Phase 3 Fields
+    debate_rounds: Optional[int] = None
+    arbiter_notes: Optional[str] = None
+    approved_at: Optional[datetime] = None
+    rejection_reason: Optional[str] = None
+    parent_hypothesis_id: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 

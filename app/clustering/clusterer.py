@@ -53,9 +53,17 @@ class PaperClusterer:
             logger.warning(
                 "clustering_all_noise",
                 paper_count=len(papers),
-                message="HDBSCAN classified everything as noise, creating single cluster",
+                message="HDBSCAN classified everything as noise, falling back to KMeans",
             )
-            return await self._create_single_cluster(papers, db)
+            from sklearn.cluster import KMeans
+            # Try to divide into roughly 5 papers per cluster, max out at 5 clusters
+            n_clusters = min(max(2, len(papers) // 5), 5)
+            kmeans = KMeans(n_clusters=n_clusters, random_state=42)
+            kmeans_labels = kmeans.fit_predict(embeddings)
+            
+            for paper, label in zip(papers, kmeans_labels):
+                clusters.setdefault(int(label), []).append(paper)
+
 
         logger.info(
             "clustering_results",

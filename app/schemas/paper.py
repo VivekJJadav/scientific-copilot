@@ -13,6 +13,7 @@ class PaperResponse(BaseModel):
     pdf_url: str
     embedding: Optional[List[float]] = None
     arxiv_status: str
+    cluster_id: Optional[uuid.UUID] = None
     created_at: datetime
     updated_at: datetime
     

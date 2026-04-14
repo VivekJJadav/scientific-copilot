@@ -12,6 +12,9 @@ from app.debate.debate_graph import run_debate
 logger = structlog.get_logger(__name__)
 router = APIRouter()
 
+# In-memory store for debate transcripts so we don't need a DB migration
+in_memory_transcripts = {}
+
 async def _process_debate(hypothesis_id: uuid.UUID, db: AsyncSession) -> dict:
     hypothesis = await db.get(HypothesisModel, hypothesis_id)
     if not hypothesis:
@@ -44,22 +47,40 @@ async def _process_debate(hypothesis_id: uuid.UUID, db: AsyncSession) -> dict:
     final_state = await run_debate(hypothesis, papers)
     
     verdict = final_state.get("arbiter_verdict", "FAIL")
-    rounds_completed = final_state.get("round", 0) - 1  # -1 because proposer is 1, so 3 cycles -> 4. Wait.
-    # Actually just log state["round"] or state["round"] - 1.
-    # proposer increments to 1. 3 cycles increment to 4. 
-    # Let's say rounds_completed = (state["round"] - 1)
+    rounds_completed = final_state.get("round", 0) - 1
     
     if verdict == "PASS" and final_state["final_hypothesis"]:
         updated_hyp = final_state["final_hypothesis"]
         hypothesis.novelty_score = updated_hyp.novelty_score
         hypothesis.feasibility_score = updated_hyp.feasibility_score
         hypothesis.risk_factors = updated_hyp.risk_factors
-        hypothesis.status = "pending"
-    else:
-        hypothesis.status = "rejected"
+        
+    # Always keep it pending so the human can review it (Approve/Reject)
+    hypothesis.status = "pending"
+    if verdict != "PASS":
         hypothesis.rejection_reason = final_state.get("rejection_reason", "Failed debate")
         
-    hypothesis.debate_rounds = rounds_completed
+    # Ensure we store at least 1 round if started
+    hypothesis.debate_rounds = max(rounds_completed, 1)
+    
+    # Store transcript in memory for the Debate Drawer UI
+    transcript = []
+    if final_state.get("proposal"):
+        transcript.append({"role": "proposer", "content": final_state["proposal"], "round": 1})
+        
+    for i, crit in enumerate(final_state.get("critiques", [])):
+        transcript.append({"role": "critic", "content": crit, "round": i+1})
+        if i < len(final_state.get("rebuttals", [])):
+            transcript.append({"role": "proposer", "content": final_state.get("rebuttals")[i], "round": i+1})
+            
+    in_memory_transcripts[str(hypothesis_id)] = {
+        "transcript": transcript,
+        "verdict": verdict,
+        "final_novelty": hypothesis.novelty_score,
+        "final_feasibility": hypothesis.feasibility_score,
+        "surviving_risks": hypothesis.risk_factors or [],
+        "arbiter_notes": hypothesis.arbiter_notes or ""
+    }
     
     await db.commit()
     
@@ -89,11 +110,13 @@ async def debate_single(id: uuid.UUID, db: AsyncSession = Depends(get_session)):
 @router.post("/run-all")
 async def debate_run_all(db: AsyncSession = Depends(get_session)):
     stmt = select(HypothesisModel).where(
-        HypothesisModel.status == "pending",
-        HypothesisModel.debate_rounds == None
+        HypothesisModel.status == "pending"
     )
     result = await db.execute(stmt)
-    hypotheses = result.scalars().all()
+    all_pending = result.scalars().all()
+    
+    # Filter in Python to capture both NULL and 0 rounds
+    hypotheses = [h for h in all_pending if not h.debate_rounds]
     
     summary = {"debated": 0, "passed": 0, "failed": 0}
     
@@ -106,3 +129,10 @@ async def debate_run_all(db: AsyncSession = Depends(get_session)):
             summary["failed"] += 1
             
     return summary
+
+@router.get("/{id}")
+async def get_debate_transcript(id: uuid.UUID):
+    transcript_data = in_memory_transcripts.get(str(id))
+    if not transcript_data:
+        raise HTTPException(status_code=404, detail="Debate transcript not found")
+    return transcript_data

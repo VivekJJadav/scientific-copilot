@@ -10,7 +10,9 @@ from app.db.models import HypothesisModel
 class ReviewService:
     async def get_pending(self, db: AsyncSession) -> list[HypothesisModel]:
         stmt = select(HypothesisModel).where(
-            HypothesisModel.status == "pending"
+            HypothesisModel.status == "pending",
+            HypothesisModel.debate_rounds.isnot(None),
+            HypothesisModel.debate_rounds > 0
         ).order_by(desc(HypothesisModel.novelty_score))
         
         result = await db.execute(stmt)

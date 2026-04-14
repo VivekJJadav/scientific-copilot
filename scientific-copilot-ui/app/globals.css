@@ -1,38 +1,292 @@
 @import "tailwindcss";
 
+@theme {
+  /* ── Void backgrounds ── */
+  --color-void: #05070a;
+  --color-surface: #0a0e14;
+  --color-panel: #0f1520;
+  --color-border: #1a2332;
+  --color-border-hover: #243040;
+
+  /* ── Signal colors ── */
+  --color-signal-cyan: #00d4ff;
+  --color-signal-cyan-dim: #00d4ff40;
+  --color-signal-cyan-glow: #00d4ff15;
+  --color-signal-amber: #ffb224;
+  --color-signal-amber-dim: #ffb22440;
+  --color-signal-green: #00e5a0;
+  --color-signal-green-dim: #00e5a040;
+  --color-signal-red: #ff3b5c;
+  --color-signal-red-dim: #ff3b5c40;
+  --color-signal-violet: #a78bfa;
+  --color-signal-violet-dim: #a78bfa40;
+
+  /* ── Text hierarchy ── */
+  --color-text-primary: #d0d8e8;
+  --color-text-secondary: #6b7a90;
+  --color-text-muted: #344055;
+
+  /* ── Font families ── */
+  --font-mono: var(--font-ibm-plex-mono), 'IBM Plex Mono', 'Courier New', monospace;
+  --font-sans: var(--font-space-grotesk), 'Space Grotesk', system-ui, sans-serif;
+}
+
 :root {
-  --font-inter: 'Inter', sans-serif;
+  --font-ibm-plex-mono: 'IBM Plex Mono', monospace;
+  --font-space-grotesk: 'Space Grotesk', sans-serif;
 }
 
 body {
-  font-family: var(--font-inter);
+  font-family: var(--font-mono);
+  background: var(--color-void);
+  color: var(--color-text-primary);
 }
 
-/* React Flow overrides */
+/* ═══════════════════════════════════════════════
+   ANIMATIONS — Agentic state feedback
+   ═══════════════════════════════════════════════ */
+
+/* Scan line — horizontal sweep for running states */
+@keyframes scan-line {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(200%); }
+}
+
+/* Ambient breathe — subtle opacity oscillation for idle/waiting */
+@keyframes ambient-breathe {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+/* Radiance burst — completion flash */
+@keyframes radiance-burst {
+  0% { box-shadow: 0 0 0px transparent; opacity: 1; }
+  30% { box-shadow: 0 0 20px var(--color-signal-green-dim); }
+  100% { box-shadow: 0 0 0px transparent; opacity: 1; }
+}
+
+/* Signal pulse — active indicator throb */
+@keyframes signal-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.85); }
+}
+
+/* Shake error — failure micro-shake */
+@keyframes shake-error {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-3px); }
+  40% { transform: translateX(3px); }
+  60% { transform: translateX(-2px); }
+  80% { transform: translateX(2px); }
+}
+
+/* Typing dots — sequential dot reveal */
+@keyframes typing-dots {
+  0%, 20% { opacity: 0.2; }
+  50% { opacity: 1; }
+  80%, 100% { opacity: 0.2; }
+}
+
+/* Glow ring — rotating gradient for processing */
+@keyframes glow-ring {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Border glow pulse */
+@keyframes border-glow {
+  0%, 100% { border-color: var(--color-border); }
+  50% { border-color: var(--color-signal-cyan); }
+}
+
+/* Cursor blink for terminal prompt */
+@keyframes cursor-blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+
+/* Slide in from left */
+@keyframes slide-in-left {
+  0% { transform: translateX(-30px); opacity: 0; }
+  100% { transform: translateX(0); opacity: 1; }
+}
+
+/* Fill bar animation */
+@keyframes fill-bar {
+  0% { width: 0%; }
+}
+
+/* Connector fill */
+@keyframes connector-fill {
+  0% { background-position: 200% 0; }
+  100% { background-position: 0% 0; }
+}
+
+/* ── Utility classes ── */
+
+.animate-scan-line {
+  animation: scan-line 2s ease-in-out infinite;
+}
+
+.animate-breathe {
+  animation: ambient-breathe 3s ease-in-out infinite;
+}
+
+.animate-radiance {
+  animation: radiance-burst 0.6s ease-out forwards;
+}
+
+.animate-signal-pulse {
+  animation: signal-pulse 1.5s ease-in-out infinite;
+}
+
+.animate-shake {
+  animation: shake-error 0.4s ease-out;
+}
+
+.animate-typing-dot {
+  animation: typing-dots 1.4s ease-in-out infinite;
+}
+
+.animate-glow-ring {
+  animation: glow-ring 3s linear infinite;
+}
+
+.animate-border-glow {
+  animation: border-glow 2s ease-in-out infinite;
+}
+
+.animate-cursor-blink {
+  animation: cursor-blink 1s step-end infinite;
+}
+
+.animate-slide-in-left {
+  animation: slide-in-left 0.4s ease-out forwards;
+}
+
+.animate-fill-bar {
+  animation: fill-bar 0.8s ease-out forwards;
+}
+
+/* ═══════════════════════════════════════════════
+   GLASS & PANEL EFFECTS
+   ═══════════════════════════════════════════════ */
+
+.panel-glass {
+  background: linear-gradient(
+    135deg,
+    rgba(10, 14, 20, 0.95),
+    rgba(15, 21, 32, 0.90)
+  );
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--color-border);
+}
+
+.signal-box {
+  background: rgba(0, 212, 255, 0.04);
+  border: 1px solid rgba(0, 212, 255, 0.15);
+  border-radius: 6px;
+}
+
+/* ═══════════════════════════════════════════════
+   REACT FLOW OVERRIDES
+   ═══════════════════════════════════════════════ */
+
 .react-flow__node {
   cursor: pointer;
 }
 
 .react-flow__minimap {
-  background: #111111 !important;
-  border: 1px solid #222222 !important;
-  border-radius: 8px !important;
+  background: #0a0e14 !important;
+  border: 0.5px solid #1a2332 !important;
+  border-radius: 6px !important;
 }
 
-/* Custom scrollbar */
+.react-flow__edge-path {
+  stroke: #1a2332;
+}
+
+.react-flow__background pattern circle {
+  fill: #1a2332 !important;
+}
+
+/* ═══════════════════════════════════════════════
+   CUSTOM SCROLLBAR
+   ═══════════════════════════════════════════════ */
+
 ::-webkit-scrollbar {
-  width: 6px;
+  width: 5px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #0a0a0a;
+  background: #05070a;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #333;
+  background: #1a2332;
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #444;
+  background: #243040;
+}
+
+/* ═══════════════════════════════════════════════
+   TYPOGRAPHY UTILITIES
+   ═══════════════════════════════════════════════ */
+
+.font-heading {
+  font-family: var(--font-sans);
+}
+
+.font-data {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+/* Monospace data readout */
+.readout {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+}
+
+/* Terminal-style label */
+.terminal-label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+/* ═══════════════════════════════════════════════
+   SCAN LINE OVERLAY
+   ═══════════════════════════════════════════════ */
+
+.scan-line-overlay {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  border-radius: inherit;
+}
+
+.scan-line-overlay::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 40%;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(0, 212, 255, 0.08),
+    transparent
+  );
+  animation: scan-line 2.5s ease-in-out infinite;
 }

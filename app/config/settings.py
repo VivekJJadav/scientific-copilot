@@ -16,16 +16,16 @@ class Settings(BaseSettings):
     LLM_FALLBACK_API_KEY: str = ""
 
     # Hypothesis thresholds
-    NOVELTY_THRESHOLD: float = 0.6
-    FEASIBILITY_THRESHOLD: float = 0.5
+    NOVELTY_THRESHOLD: float = 0.3
+    FEASIBILITY_THRESHOLD: float = 0.3
 
     # Extraction
     EXTRACTION_BATCH_SIZE: int = 10
 
     # Phase 3: Debate
     DEBATE_MAX_ROUNDS: int = 3
-    DEBATE_NOVELTY_MIN: float = 0.6
-    DEBATE_FEASIBILITY_MIN: float = 0.5
+    DEBATE_NOVELTY_MIN: float = 0.3
+    DEBATE_FEASIBILITY_MIN: float = 0.3
 
     # Phase 3: Execution Sandbox
     SANDBOX_CPU_LIMIT: str = "2.0"

@@ -155,7 +155,7 @@ class HypothesisGenerator:
         logger.info("embedding_step_complete", **embed_result)
 
         # Fetch unused gaps from DB first (these come from clustering + feedback)
-        stmt = select(Gap).where(Gap.used == False).limit(5)  # noqa: E712
+        stmt = select(Gap).where(Gap.used == False).limit(20)  # noqa: E712
         db_gaps = (await db.execute(stmt)).scalars().all()
 
         # Convert DB gaps to dicts
@@ -170,8 +170,8 @@ class HypothesisGenerator:
             gaps.append(gap_dict)
             gap_models[g.gap_description] = g
 
-        # If no unused gaps, extract new ones from papers
-        if not gaps:
+        # If we have fewer than 15 gaps, extract more from papers to top off
+        if len(gaps) < 15:
             papers_stmt = select(Paper).where(
                 Paper.arxiv_status.in_(["processed", "embedded"])
             )
@@ -195,11 +195,12 @@ class HypothesisGenerator:
                     )
                     for p in papers
                 ]
-                gaps = await self.gap_extractor.extract_gaps(atoms, settings.ARXIV_QUERY)
+                extracted_gaps = await self.gap_extractor.extract_gaps(atoms, settings.ARXIV_QUERY)
 
                 # Also find cluster-aware gaps
                 cluster_gaps = await self.gap_extractor.find_gaps_from_clusters(db)
-                gaps = cluster_gaps + gaps
+                gaps.extend(cluster_gaps)
+                gaps.extend(extracted_gaps)
 
         summary = {
             "gaps_found": len(gaps),
@@ -233,8 +234,8 @@ class HypothesisGenerator:
             for p in all_papers
         ]
 
-        # Generate hypotheses for top 3 gaps
-        for gap in gaps[:3]:
+        # Generate hypotheses for up to 10 gaps to yield more hypotheses
+        for gap in gaps[:10]:
             # Find source atoms for this gap
             source_ids = gap.get("source_paper_ids", [])
             source_atoms = [a for a in all_atoms if a.paper_id in source_ids]

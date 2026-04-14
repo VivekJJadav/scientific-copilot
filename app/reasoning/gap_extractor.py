@@ -88,7 +88,7 @@ class GapExtractor:
         return "\n".join(lines) if lines else "No limitations found."
 
     async def find_gaps_from_clusters(
-        self, db: AsyncSession, top_k: int = 5
+        self, db: AsyncSession, top_k: int = 25
     ) -> list[dict]:
         """Find research gaps from paper clusters using cosine similarity.
 

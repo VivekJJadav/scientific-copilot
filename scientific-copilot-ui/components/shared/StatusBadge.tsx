@@ -1,37 +1,46 @@
-import { clsx } from 'clsx'
+'use client'
 
-const statusConfig: Record<string, { label: string; className: string }> = {
-  pending: { label: 'Pending', className: 'bg-amber-500/20 text-amber-400 border-amber-500/30' },
-  approved: { label: 'Approved', className: 'bg-green-500/20 text-green-400 border-green-500/30' },
-  rejected: { label: 'Rejected', className: 'bg-red-500/20 text-red-400 border-red-500/30' },
-  running: { label: 'Running', className: 'bg-blue-500/20 text-blue-400 border-blue-500/30' },
-  done: { label: 'Done', className: 'bg-green-500/20 text-green-400 border-green-500/30' },
-  completed: { label: 'Completed', className: 'bg-green-500/20 text-green-400 border-green-500/30' },
-  failed: { label: 'Failed', className: 'bg-red-500/20 text-red-400 border-red-500/30' },
-  queued: { label: 'Queued', className: 'bg-gray-500/20 text-gray-400 border-gray-500/30' },
-  raw: { label: 'Raw', className: 'bg-gray-500/20 text-gray-400 border-gray-500/30' },
-  processed: { label: 'Processed', className: 'bg-blue-500/20 text-blue-400 border-blue-500/30' },
-  embedded: { label: 'Embedded', className: 'bg-indigo-500/20 text-indigo-400 border-indigo-500/30' },
-  validated: { label: 'Validated', className: 'bg-green-500/20 text-green-400 border-green-500/30' },
-  inconclusive: { label: 'Inconclusive', className: 'bg-gray-500/20 text-gray-400 border-gray-500/30' },
+type BadgeStatus = string
+
+const STATUS_STYLES: Record<string, { bg: string; text: string; dot: string; animate?: string }> = {
+  raw:               { bg: '#344055', text: '#6b7a90', dot: '#6b7a90' },
+  processed:         { bg: '#00d4ff15', text: '#00d4ff', dot: '#00d4ff' },
+  embedded:          { bg: '#a78bfa15', text: '#a78bfa', dot: '#a78bfa' },
+  extraction_failed: { bg: '#ff3b5c15', text: '#ff3b5c', dot: '#ff3b5c' },
+  pending:           { bg: '#ffb22415', text: '#ffb224', dot: '#ffb224', animate: 'animate-breathe' },
+  approved:          { bg: '#00e5a015', text: '#00e5a0', dot: '#00e5a0' },
+  rejected:          { bg: '#ff3b5c15', text: '#ff3b5c', dot: '#ff3b5c' },
+  running:           { bg: '#00d4ff15', text: '#00d4ff', dot: '#00d4ff', animate: 'animate-signal-pulse' },
+  done:              { bg: '#00e5a015', text: '#00e5a0', dot: '#00e5a0' },
+  queued:            { bg: '#34405520', text: '#6b7a90', dot: '#6b7a90', animate: 'animate-breathe' },
+  completed:         { bg: '#00e5a015', text: '#00e5a0', dot: '#00e5a0' },
+  failed:            { bg: '#ff3b5c15', text: '#ff3b5c', dot: '#ff3b5c' },
 }
 
 interface StatusBadgeProps {
-  status: string
+  status: BadgeStatus
   size?: 'sm' | 'md'
 }
 
 export function StatusBadge({ status, size = 'sm' }: StatusBadgeProps) {
-  const config = statusConfig[status] ?? { label: status, className: 'bg-gray-500/20 text-gray-400 border-gray-500/30' }
+  const styles = STATUS_STYLES[status] ?? STATUS_STYLES.raw
+
   return (
     <span
-      className={clsx(
-        'inline-flex items-center rounded-full border font-medium',
-        size === 'sm' ? 'px-2 py-0.5 text-xs' : 'px-3 py-1 text-sm',
-        config.className
-      )}
+      className={`inline-flex items-center gap-1.5 rounded font-mono uppercase tracking-widest ${
+        size === 'sm' ? 'px-1.5 py-0.5 text-[7px]' : 'px-2 py-0.5 text-[9px]'
+      }`}
+      style={{ backgroundColor: styles.bg, color: styles.text }}
     >
-      {config.label}
+      <span
+        className={`inline-block rounded-full ${styles.animate ?? ''}`}
+        style={{
+          width: size === 'sm' ? 4 : 5,
+          height: size === 'sm' ? 4 : 5,
+          backgroundColor: styles.dot,
+        }}
+      />
+      {status}
     </span>
   )
 }

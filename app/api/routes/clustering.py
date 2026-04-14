@@ -40,6 +40,7 @@ async def list_clusters(db: AsyncSession = Depends(get_session)):
                 "id": str(c.id),
                 "label": c.label,
                 "top_terms": c.top_terms,
+                "paper_ids": c.paper_ids or [],
                 "paper_count": len(c.paper_ids) if c.paper_ids else 0,
             }
             for c in clusters
