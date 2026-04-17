@@ -2,6 +2,10 @@
 
 type BadgeStatus = string
 
+const STATUS_LABELS: Record<string, string> = {
+  extraction_failed: 'llm offline',
+}
+
 const STATUS_STYLES: Record<string, { bg: string; text: string; dot: string; animate?: string }> = {
   raw:               { bg: '#344055', text: '#6b7a90', dot: '#6b7a90' },
   processed:         { bg: '#00d4ff15', text: '#00d4ff', dot: '#00d4ff' },
@@ -24,6 +28,7 @@ interface StatusBadgeProps {
 
 export function StatusBadge({ status, size = 'sm' }: StatusBadgeProps) {
   const styles = STATUS_STYLES[status] ?? STATUS_STYLES.raw
+  const label = STATUS_LABELS[status] ?? status.replaceAll('_', ' ')
 
   return (
     <span
@@ -40,7 +45,7 @@ export function StatusBadge({ status, size = 'sm' }: StatusBadgeProps) {
           backgroundColor: styles.dot,
         }}
       />
-      {status}
+      {label}
     </span>
   )
 }

@@ -1,9 +1,9 @@
 """DatasetExtractor: Extracts dataset names from papers using LLM."""
 
-import json
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from pydantic import BaseModel, Field, ValidationError
 
 from app.config.settings import settings
 from app.db.models import Paper, DatasetRegistry
@@ -11,6 +11,10 @@ from app.llm.router import LLMRouter
 from app.llm.prompts import DATASET_EXTRACTION_PROMPT
 
 logger = structlog.get_logger(__name__)
+
+
+class DatasetExtractionResponseSchema(BaseModel):
+    datasets: list[str] = Field(default_factory=list)
 
 
 class DatasetExtractor:
@@ -82,11 +86,16 @@ class DatasetExtractor:
 
         try:
             response = await self.llm.complete(prompt, expect_json=True)
-            parsed = json.loads(response)
-            datasets = parsed.get("datasets", [])
-            if not isinstance(datasets, list):
-                return []
-            return [str(d) for d in datasets if d]
+            parsed = DatasetExtractionResponseSchema.model_validate_json(response)
+            return [str(d) for d in parsed.datasets if d]
+        except ValidationError as e:
+            logger.warning(
+                "dataset_extraction_validation_failed",
+                paper_id=paper.arxiv_id,
+                error=str(e),
+                raw_output=response if "response" in locals() else None,
+            )
+            return []
         except Exception as e:
             logger.warning(
                 "dataset_extraction_failed",

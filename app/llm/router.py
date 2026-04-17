@@ -8,6 +8,12 @@ import re
 import time
 import httpx
 import structlog
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from app.config.settings import settings
 
@@ -17,6 +23,22 @@ logger = structlog.get_logger(__name__)
 class LLMUnavailableError(Exception):
     """Raised when both Ollama and fallback LLM providers fail."""
     pass
+
+
+class RetryableLLMError(LLMUnavailableError):
+    """Raised when a transient network error should trigger a retry."""
+    pass
+
+
+def _log_retry_attempt(retry_state) -> None:
+    next_action = retry_state.next_action
+    wait_seconds = next_action.sleep if next_action else None
+    logger.warning(
+        "llm_retry_scheduled",
+        attempt=retry_state.attempt_number,
+        wait_seconds=wait_seconds,
+        error=str(retry_state.outcome.exception()) if retry_state.outcome else None,
+    )
 
 
 class LLMRouter:
@@ -29,6 +51,13 @@ class LLMRouter:
         self.fallback_provider = settings.LLM_FALLBACK_PROVIDER
         self.fallback_api_key = settings.LLM_FALLBACK_API_KEY
 
+    @retry(
+        retry=retry_if_exception_type(RetryableLLMError),
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        before_sleep=_log_retry_attempt,
+        reraise=True,
+    )
     async def complete(self, prompt: str, expect_json: bool = False, force_json_object: bool = False) -> str:
         """Send a prompt to the LLM and return the response text.
 
@@ -43,6 +72,9 @@ class LLMRouter:
         Raises:
             LLMUnavailableError: If both Ollama and fallback fail.
         """
+        retryable_error = False
+        ollama_error: Exception | None = None
+
         # Try Ollama first
         try:
             result = await self._call_ollama(prompt, force_json_object)
@@ -50,11 +82,14 @@ class LLMRouter:
                 result = self._strip_code_fences(result)
             return result
         except Exception as e:
+            ollama_error = e
+            retryable_error = self._is_retryable_error(e)
             logger.warning(
                 "ollama_failed",
                 error=str(e),
                 model=self.ollama_model,
                 fallback_triggered=True,
+                retryable=retryable_error,
             )
 
         # Try fallback
@@ -65,11 +100,22 @@ class LLMRouter:
                     result = self._strip_code_fences(result)
                 return result
             except Exception as e:
+                retryable_fallback_error = self._is_retryable_error(e)
                 logger.error(
                     "groq_fallback_failed",
                     error=str(e),
                     fallback_triggered=True,
+                    retryable=retryable_fallback_error,
                 )
+                if retryable_fallback_error:
+                    raise RetryableLLMError(
+                        "Transient fallback LLM network error. Retrying request."
+                    ) from e
+
+        if retryable_error:
+            raise RetryableLLMError(
+                "Transient Ollama network error. Retrying request."
+            ) from ollama_error
 
         raise LLMUnavailableError(
             "Both Ollama and fallback LLM providers failed. "
@@ -162,3 +208,20 @@ class LLMRouter:
             return text[start_idx:end_idx + 1]
             
         return text
+
+    @staticmethod
+    def _is_retryable_error(error: Exception) -> bool:
+        retryable_httpx_errors = (
+            httpx.ConnectError,
+            httpx.ConnectTimeout,
+            httpx.ReadTimeout,
+            httpx.WriteTimeout,
+            httpx.PoolTimeout,
+            httpx.ReadError,
+            httpx.WriteError,
+            httpx.RemoteProtocolError,
+        )
+        if isinstance(error, retryable_httpx_errors):
+            return True
+
+        return error.__class__.__name__ in {"APIConnectionError", "APITimeoutError"}

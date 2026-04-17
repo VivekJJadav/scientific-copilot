@@ -1,6 +1,6 @@
 import uuid
 from typing import Optional, List
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import func, desc
@@ -9,14 +9,23 @@ from app.db.session import get_session
 from app.db.models import Experiment
 from app.execution.template_runner import TemplateRunner
 from app.schemas.experiment import ExperimentListResponse, ExperimentResponse
+from app.api.routes.tasks import create_task, run_in_background
+from app.api.rate_limit import rate_limit
 
 router = APIRouter()
 runner = TemplateRunner()
 
+async def _run_experiments_task(db: AsyncSession):
+    return await runner.run_approved(db)
+
 @router.post("/run")
-async def run_experiments(db: AsyncSession = Depends(get_session)):
-    summary = await runner.run_approved(db)
-    return summary
+async def run_experiments(
+    background_tasks: BackgroundTasks,
+    _rate_limited: None = Depends(rate_limit()),
+):
+    task_id = create_task("run")
+    background_tasks.add_task(run_in_background, task_id, _run_experiments_task)
+    return {"task_id": task_id, "status": "queued"}
 
 @router.get("", response_model=ExperimentListResponse)
 async def list_experiments(

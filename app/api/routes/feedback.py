@@ -2,7 +2,7 @@
 
 import uuid
 import structlog
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
@@ -10,28 +10,34 @@ from app.db.session import get_session
 from app.db.models import Experiment, HypothesisModel, ExperimentResult, Gap
 from app.feedback.result_analyzer import ResultAnalyzer
 from app.feedback.loop import FeedbackLoop
+from app.api.routes.tasks import create_task, run_in_background
+from app.api.rate_limit import rate_limit
 
 logger = structlog.get_logger(__name__)
 
 router = APIRouter()
 
 
-@router.post("/run")
-async def run_feedback_loop(db: AsyncSession = Depends(get_session)):
-    """Run the full feedback loop: analyze → gaps → hypotheses.
-
-    Returns:
-        Summary with experiments_analyzed, new_gaps_from_failures,
-        arbiter_examples_updated, new_hypotheses_generated.
-    """
+async def _run_feedback_loop_task(db: AsyncSession):
     loop = FeedbackLoop()
-    result = await loop.run(db)
-    return result
+    return await loop.run(db)
+
+@router.post("/run")
+async def run_feedback_loop(
+    background_tasks: BackgroundTasks,
+    _rate_limited: None = Depends(rate_limit()),
+):
+    """Queue the full feedback loop: analyze → gaps → hypotheses."""
+    task_id = create_task("feedback")
+    background_tasks.add_task(run_in_background, task_id, _run_feedback_loop_task)
+    return {"task_id": task_id, "status": "queued"}
 
 
 @router.post("/analyze/{experiment_id}")
 async def analyze_experiment(
-    experiment_id: uuid.UUID, db: AsyncSession = Depends(get_session)
+    experiment_id: uuid.UUID,
+    db: AsyncSession = Depends(get_session),
+    _rate_limited: None = Depends(rate_limit()),
 ):
     """Analyze a single completed experiment.
 
@@ -103,10 +109,18 @@ async def requeue_failed(db: AsyncSession = Depends(get_session)):
         if not hyp:
             continue
 
+        failure_marker = f"[failure:{r.experiment_id}]"
+        gap_desc_prefix = f"{failure_marker} Failed hypothesis '{hyp.title}':"
+        existing_stmt = select(Gap).where(Gap.gap_description.like(f"{failure_marker}%"))
+        existing_gap = (await db.execute(existing_stmt)).scalars().first()
+        
+        if existing_gap:
+            continue
+
         gap = Gap(
             gap_type="negative_result",
             gap_description=(
-                f"Failed hypothesis '{hyp.title}': {r.result_summary}. "
+                f"{gap_desc_prefix} {r.result_summary}. "
                 f"Lessons: {', '.join(r.lessons_learned)}"
             ),
             source_paper_ids=hyp.source_paper_ids or [],

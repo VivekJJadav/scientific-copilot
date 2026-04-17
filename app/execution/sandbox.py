@@ -5,7 +5,7 @@ import time
 import asyncio
 import docker
 import structlog
-from datetime import datetime
+from datetime import UTC, datetime
 
 from app.db.models import Experiment
 from app.config.settings import settings
@@ -24,7 +24,7 @@ class ExperimentSandbox:
 
     async def run(self, experiment: Experiment) -> dict:
         """Run an experiment in an isolated Docker container and return execution metadata."""
-        start_time = datetime.utcnow()
+        start_time = datetime.now(UTC)
         container_id = None
         exit_code = -1
         logs = ""
@@ -33,35 +33,15 @@ class ExperimentSandbox:
         abs_exp_dir = os.path.abspath(experiment.experiment_dir)
 
         if not self.client:
-            logger.warning("docker_not_available_simulating_run")
-            await asyncio.sleep(2)
-            import subprocess
-            process = await asyncio.create_subprocess_shell(
-                "python evaluate.py",
-                cwd=abs_exp_dir,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
-            )
-            stdout, stderr = await process.communicate()
-            
-            exit_code = process.returncode
-            if exit_code == 0:
-                status = "completed"
-                results_path = os.path.join(abs_exp_dir, "results.json")
-                if os.path.exists(results_path):
-                    with open(results_path, 'r') as f:
-                        results = json.load(f)
-            else:
-                logs = stderr.decode('utf-8', errors='replace')
-                
+            logger.warning("docker_not_available")
             return {
-                "status": status,
-                "container_id": "simulated",
-                "exit_code": exit_code,
-                "error_log": logs if status == "failed" else None,
-                "results": results,
+                "status": "failed",
+                "container_id": None,
+                "exit_code": -1,
+                "error_log": "Docker is not available on host. Cannot run experiment safely.",
+                "results": None,
                 "started_at": start_time,
-                "completed_at": datetime.utcnow()
+                "completed_at": datetime.now(UTC)
             }
 
         await self._pull_image(self.image)
@@ -139,7 +119,7 @@ class ExperimentSandbox:
             if container_id:
                 await self._cleanup(container_id)
                 
-        completed_at = datetime.utcnow()
+        completed_at = datetime.now(UTC)
         
         return {
             "status": status,

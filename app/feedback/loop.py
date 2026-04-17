@@ -114,43 +114,13 @@ class FeedbackLoop:
         if gap.source_paper_ids:
             stmt = select(Paper).where(Paper.arxiv_id.in_(gap.source_paper_ids[:5]))
             papers = (await db.execute(stmt)).scalars().all()
-            source_atoms = [
-                ResearchAtom(
-                    paper_id=p.arxiv_id,
-                    title=p.title,
-                    abstract=p.abstract,
-                    authors=p.authors or [],
-                    published_year=p.published_year,
-                    pdf_url=p.pdf_url,
-                    methods=[],
-                    limitations=[],
-                    claims=[],
-                    embedding=[float(x) for x in p.embedding] if p.embedding is not None else None,
-                    arxiv_status=p.arxiv_status,
-                )
-                for p in papers
-            ]
+            source_atoms = [ResearchAtom.from_paper(p) for p in papers]
 
         if not source_atoms:
             # Fallback: use any processed papers
             stmt = select(Paper).where(Paper.arxiv_status.in_(["processed", "embedded"])).limit(3)
             papers = (await db.execute(stmt)).scalars().all()
-            source_atoms = [
-                ResearchAtom(
-                    paper_id=p.arxiv_id,
-                    title=p.title,
-                    abstract=p.abstract,
-                    authors=p.authors or [],
-                    published_year=p.published_year,
-                    pdf_url=p.pdf_url,
-                    methods=[],
-                    limitations=[],
-                    claims=[],
-                    embedding=[float(x) for x in p.embedding] if p.embedding is not None else None,
-                    arxiv_status=p.arxiv_status,
-                )
-                for p in papers
-            ]
+            source_atoms = [ResearchAtom.from_paper(p) for p in papers]
 
         hypothesis = await self.generator.generate(gap_dict, source_atoms, db)
 

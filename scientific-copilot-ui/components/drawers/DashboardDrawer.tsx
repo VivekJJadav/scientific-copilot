@@ -1,10 +1,13 @@
 'use client'
 
+import { useEffect, useMemo, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useAppStore } from '@/lib/store/appStore'
 import { usePipelineState } from '@/lib/hooks/usePipelineState'
 import { useQuery } from '@tanstack/react-query'
+import { useQueryClient } from '@tanstack/react-query'
 import { getHypotheses } from '@/lib/api/hypotheses'
+import { resetDatabase } from '@/lib/api/admin'
 import {
   LineChart,
   Line,
@@ -15,9 +18,12 @@ import {
 } from 'recharts'
 
 export function DashboardDrawer() {
-  const { openDrawer, closeDrawer } = useAppStore()
+  const { openDrawer, closeDrawer, ingestLimit, setIngestLimit, isRunning } = useAppStore()
   const isOpen = openDrawer === 'dashboard'
   const { counts } = usePipelineState()
+  const queryClient = useQueryClient()
+  const [isResetting, setIsResetting] = useState(false)
+  const fetchLimitOptions = useMemo(() => [2, 5, 10, 20], [])
 
   const { data: hypothesesData } = useQuery({
     queryKey: ['hypotheses', { limit: 100 }],
@@ -53,6 +59,38 @@ export function DashboardDrawer() {
     { label: 'CYCLE', value: counts.maxIteration, color: '#00d4ff' },
   ]
 
+  useEffect(() => {
+    const savedLimit = window.localStorage.getItem('dashboard.ingestLimit')
+    if (!savedLimit) return
+
+    const parsedLimit = Number(savedLimit)
+    if (Number.isFinite(parsedLimit) && parsedLimit > 0 && parsedLimit !== ingestLimit) {
+      setIngestLimit(parsedLimit)
+    }
+  }, [ingestLimit, setIngestLimit])
+
+  const cycleFetchLimit = () => {
+    const currentIndex = fetchLimitOptions.indexOf(ingestLimit)
+    const nextLimit = fetchLimitOptions[(currentIndex + 1) % fetchLimitOptions.length]
+    setIngestLimit(nextLimit)
+    window.localStorage.setItem('dashboard.ingestLimit', String(nextLimit))
+  }
+
+  const handleClearDb = async () => {
+    const confirmed = window.confirm(
+      'Clear all papers, hypotheses, experiments, clusters, gaps, and datasets from the database?'
+    )
+    if (!confirmed) return
+
+    setIsResetting(true)
+    try {
+      await resetDatabase()
+      await queryClient.invalidateQueries()
+    } finally {
+      setIsResetting(false)
+    }
+  }
+
   return (
     <AnimatePresence>
       {isOpen && (
@@ -66,12 +104,28 @@ export function DashboardDrawer() {
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-2.5 border-b border-border shrink-0">
             <span className="text-[8px] font-mono text-signal-cyan uppercase tracking-[0.15em]">✦ MISSION DASHBOARD</span>
-            <button
-              onClick={closeDrawer}
-              className="w-6 h-6 rounded flex items-center justify-center text-text-muted hover:text-signal-red hover:bg-signal-red/10 transition-colors cursor-pointer"
-            >
-              ✕
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={cycleFetchLimit}
+                disabled={isRunning || isResetting}
+                className="rounded-md border border-signal-cyan/30 bg-signal-cyan/8 px-2.5 py-1 text-[8px] font-mono uppercase tracking-[0.14em] text-signal-cyan transition-colors hover:border-signal-cyan/60 hover:bg-signal-cyan/12 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Fetch Limit: {ingestLimit}
+              </button>
+              <button
+                onClick={handleClearDb}
+                disabled={isRunning || isResetting}
+                className="rounded-md border border-signal-red/30 bg-signal-red/8 px-2.5 py-1 text-[8px] font-mono uppercase tracking-[0.14em] text-signal-red transition-colors hover:border-signal-red/60 hover:bg-signal-red/12 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {isResetting ? 'Clearing...' : 'Clear DB'}
+              </button>
+              <button
+                onClick={closeDrawer}
+                className="w-6 h-6 rounded flex items-center justify-center text-text-muted hover:text-signal-red hover:bg-signal-red/10 transition-colors cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
           </div>
 
           {/* Content */}
@@ -94,6 +148,40 @@ export function DashboardDrawer() {
                   </p>
                 </div>
               ))}
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 mb-3">
+              <button
+                onClick={cycleFetchLimit}
+                disabled={isRunning || isResetting}
+                className="flex min-h-[64px] flex-col items-start justify-center rounded-xl border border-signal-cyan/35 bg-signal-cyan/10 px-3 py-2 text-left transition-colors hover:border-signal-cyan/70 hover:bg-signal-cyan/15 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <span className="text-[9px] font-mono uppercase tracking-[0.16em] text-signal-cyan">
+                  Fetch Papers
+                </span>
+                <span className="mt-1 text-xl font-mono font-bold text-signal-cyan">
+                  {ingestLimit}
+                </span>
+                <span className="text-[8px] font-mono uppercase tracking-[0.1em] text-text-muted">
+                  tap to cycle 2 / 5 / 10 / 20
+                </span>
+              </button>
+
+              <button
+                onClick={handleClearDb}
+                disabled={isRunning || isResetting}
+                className="flex min-h-[64px] flex-col items-start justify-center rounded-xl border border-signal-red/35 bg-signal-red/10 px-3 py-2 text-left transition-colors hover:border-signal-red/70 hover:bg-signal-red/15 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <span className="text-[9px] font-mono uppercase tracking-[0.16em] text-signal-red">
+                  Clear Database
+                </span>
+                <span className="mt-1 text-sm font-mono font-bold text-signal-red">
+                  {isResetting ? 'clearing now' : 'truncate all app tables'}
+                </span>
+                <span className="text-[8px] font-mono uppercase tracking-[0.1em] text-text-muted">
+                  papers, hypotheses, experiments, gaps
+                </span>
+              </button>
             </div>
 
             {/* Charts row */}

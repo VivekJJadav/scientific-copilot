@@ -8,26 +8,24 @@ in the embedding column, setting arxiv_status to 'embedded'.
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from datetime import datetime
+from datetime import UTC, datetime
 
 from app.db.models import Paper
 
 logger = structlog.get_logger(__name__)
 
+from sentence_transformers import SentenceTransformer
+
+EMBEDDING_MODEL = SentenceTransformer("all-MiniLM-L6-v2")
+logger.info("embedding_model_loaded", model="all-MiniLM-L6-v2")
+
 
 class PaperEmbedder:
     """Generates embeddings for processed papers using sentence-transformers."""
 
-    def __init__(self):
-        self._model = None
-
     def _get_model(self):
-        """Lazy-load the sentence-transformer model."""
-        if self._model is None:
-            from sentence_transformers import SentenceTransformer
-            self._model = SentenceTransformer("all-MiniLM-L6-v2")
-            logger.info("embedding_model_loaded", model="all-MiniLM-L6-v2")
-        return self._model
+        """Return the shared module-level sentence-transformer model."""
+        return EMBEDDING_MODEL
 
     async def embed_papers(self, db: AsyncSession) -> dict:
         """Generate embeddings for all 'processed' papers.
@@ -48,7 +46,6 @@ class PaperEmbedder:
         summary = {"embedded": 0, "failed": 0}
         model = self._get_model()
 
-        # Build texts for batch encoding
         texts = [f"{p.title}. {p.abstract}" for p in papers]
 
         try:
@@ -61,7 +58,7 @@ class PaperEmbedder:
             try:
                 paper.embedding = embedding.tolist()
                 paper.arxiv_status = "embedded"
-                paper.updated_at = datetime.utcnow()
+                paper.updated_at = datetime.now(UTC)
                 summary["embedded"] += 1
             except Exception as e:
                 logger.warning(
@@ -74,3 +71,11 @@ class PaperEmbedder:
         await db.commit()
         logger.info("embedding_pipeline_completed", **summary)
         return summary
+
+_embedder_instance = None
+
+def get_embedder() -> PaperEmbedder:
+    global _embedder_instance
+    if _embedder_instance is None:
+        _embedder_instance = PaperEmbedder()
+    return _embedder_instance

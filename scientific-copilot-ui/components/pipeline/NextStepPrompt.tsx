@@ -128,7 +128,7 @@ export function NextStepPrompt() {
                 </>
               ) : (
                 <>
-                  <span>{isDrawerStage ? '[OPEN]' : '[EXECUTE]'}</span>
+                  <span>{isDrawerStage ? '[OPEN]' : `[${nextAction.action.toUpperCase()}]`}</span>
                   <span className="text-text-muted text-[8px]">{nextAction.action}</span>
                 </>
               )}

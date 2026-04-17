@@ -59,7 +59,10 @@ class TemplateRunner:
                 # In a real system, LLM might generate summary. For now, basic english.
                 exp.result_summary = f"Experiment completed with metrics: {exp.results}"
             else:
-                exp.result_summary = "Experiment failed to produce results."
+                exp.result_summary = (
+                    sandbox_result["error_log"]
+                    or "Experiment failed to produce results."
+                )
                 
             await db.commit()
             

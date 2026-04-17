@@ -1,19 +1,19 @@
 import uuid
 import structlog
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from app.db.session import get_session
 from app.db.models import HypothesisModel, Paper
 from app.core.atoms import ResearchAtom
+from app.config.settings import settings
 from app.debate.debate_graph import run_debate
+from app.api.routes.tasks import create_task, run_in_background
+from app.api.rate_limit import rate_limit
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
-
-# In-memory store for debate transcripts so we don't need a DB migration
-in_memory_transcripts = {}
 
 async def _process_debate(hypothesis_id: uuid.UUID, db: AsyncSession) -> dict:
     hypothesis = await db.get(HypothesisModel, hypothesis_id)
@@ -23,31 +23,17 @@ async def _process_debate(hypothesis_id: uuid.UUID, db: AsyncSession) -> dict:
     # Fetch source papers
     papers = []
     if hypothesis.source_paper_ids:
-        stmt = select(Paper).where(Paper.arxiv_id.in_(hypothesis.source_paper_ids))
+        limited_source_ids = hypothesis.source_paper_ids[:settings.DEBATE_MAX_SOURCE_PAPERS]
+        stmt = select(Paper).where(Paper.arxiv_id.in_(limited_source_ids))
         result = await db.execute(stmt)
         papers_db = result.scalars().all()
-        papers = [
-            ResearchAtom(
-                paper_id=p.arxiv_id,
-                title=p.title,
-                abstract=p.abstract,
-                authors=p.authors,
-                published_year=p.published_year,
-                pdf_url=p.pdf_url,
-                methods=[],
-                limitations=[],
-                claims=[],
-                embedding=p.embedding,
-                arxiv_status=p.arxiv_status
-            )
-            for p in papers_db
-        ]
+        papers = [ResearchAtom.from_paper(p) for p in papers_db]
 
     # Run LangGraph Debate
     final_state = await run_debate(hypothesis, papers)
     
     verdict = final_state.get("arbiter_verdict", "FAIL")
-    rounds_completed = final_state.get("round", 0) - 1
+    rounds_completed = final_state.get("round", 0)
     
     if verdict == "PASS" and final_state["final_hypothesis"]:
         updated_hyp = final_state["final_hypothesis"]
@@ -61,27 +47,19 @@ async def _process_debate(hypothesis_id: uuid.UUID, db: AsyncSession) -> dict:
         hypothesis.rejection_reason = final_state.get("rejection_reason", "Failed debate")
         
     # Ensure we store at least 1 round if started
-    hypothesis.debate_rounds = max(rounds_completed, 1)
+    hypothesis.debate_rounds = rounds_completed
     
     # Store transcript in memory for the Debate Drawer UI
     transcript = []
     if final_state.get("proposal"):
-        transcript.append({"role": "proposer", "content": final_state["proposal"], "round": 1})
+        transcript.append({"role": "proposer", "content": final_state["proposal"], "round": 0})
         
     for i, crit in enumerate(final_state.get("critiques", [])):
         transcript.append({"role": "critic", "content": crit, "round": i+1})
         if i < len(final_state.get("rebuttals", [])):
             transcript.append({"role": "proposer", "content": final_state.get("rebuttals")[i], "round": i+1})
             
-    in_memory_transcripts[str(hypothesis_id)] = {
-        "transcript": transcript,
-        "verdict": verdict,
-        "final_novelty": hypothesis.novelty_score,
-        "final_feasibility": hypothesis.feasibility_score,
-        "surviving_risks": hypothesis.risk_factors or [],
-        "arbiter_notes": hypothesis.arbiter_notes or ""
-    }
-    
+    hypothesis.debate_transcript = transcript
     await db.commit()
     
     logger.info(
@@ -103,12 +81,17 @@ async def _process_debate(hypothesis_id: uuid.UUID, db: AsyncSession) -> dict:
 
 
 @router.post("/{id}/debate")
-async def debate_single(id: uuid.UUID, db: AsyncSession = Depends(get_session)):
-    return await _process_debate(id, db)
+async def debate_single(
+    id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    _rate_limited: None = Depends(rate_limit()),
+):
+    task_id = create_task("debate")
+    background_tasks.add_task(run_in_background, task_id, _process_debate, id)
+    return {"task_id": task_id, "status": "queued"}
 
 
-@router.post("/run-all")
-async def debate_run_all(db: AsyncSession = Depends(get_session)):
+async def _debate_run_all_task(db: AsyncSession):
     stmt = select(HypothesisModel).where(
         HypothesisModel.status == "pending"
     )
@@ -130,9 +113,26 @@ async def debate_run_all(db: AsyncSession = Depends(get_session)):
             
     return summary
 
+@router.post("/run-all")
+async def debate_run_all(
+    background_tasks: BackgroundTasks,
+    _rate_limited: None = Depends(rate_limit()),
+):
+    task_id = create_task("debate")
+    background_tasks.add_task(run_in_background, task_id, _debate_run_all_task)
+    return {"task_id": task_id, "status": "queued"}
+
 @router.get("/{id}")
-async def get_debate_transcript(id: uuid.UUID):
-    transcript_data = in_memory_transcripts.get(str(id))
-    if not transcript_data:
+async def get_debate_transcript(id: uuid.UUID, db: AsyncSession = Depends(get_session)):
+    hypothesis = await db.get(HypothesisModel, id)
+    if not hypothesis or hypothesis.debate_transcript is None:
         raise HTTPException(status_code=404, detail="Debate transcript not found")
-    return transcript_data
+        
+    return {
+        "transcript": hypothesis.debate_transcript,
+        "verdict": "PASS" if hypothesis.status == "approved" else ("FAIL" if hypothesis.rejection_reason else "PENDING"),
+        "final_novelty": hypothesis.novelty_score,
+        "final_feasibility": hypothesis.feasibility_score,
+        "surviving_risks": hypothesis.risk_factors or [],
+        "arbiter_notes": hypothesis.arbiter_notes or ""
+    }

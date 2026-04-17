@@ -1,10 +1,10 @@
 """GapExtractor: identifies research gaps from ResearchAtoms and paper clusters."""
 
-import json
 import structlog
 import numpy as np
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from pydantic import BaseModel, Field, ValidationError
 
 from app.config.settings import settings
 from app.core.atoms import ResearchAtom
@@ -12,6 +12,16 @@ from app.llm.router import LLMRouter, LLMUnavailableError
 from app.llm.prompts import GAP_EXTRACTION_PROMPT
 
 logger = structlog.get_logger(__name__)
+
+
+class GapCandidateSchema(BaseModel):
+    description: str
+    source_paper_ids: list[str] = Field(default_factory=list)
+    gap_type: str = "unknown"
+
+
+class GapExtractionResponseSchema(BaseModel):
+    gaps: list[GapCandidateSchema] = Field(default_factory=list)
 
 
 class GapExtractor:
@@ -51,8 +61,8 @@ class GapExtractor:
             response = await self.llm.complete(
                 prompt, expect_json=True, force_json_object=True
             )
-            parsed = json.loads(response)
-            gaps = parsed.get("gaps", [])
+            parsed = GapExtractionResponseSchema.model_validate_json(response)
+            gaps = [gap.model_dump() for gap in parsed.gaps]
 
             logger.info(
                 "gap_extraction_complete",
@@ -62,11 +72,12 @@ class GapExtractor:
             )
             return gaps
 
-        except (json.JSONDecodeError, KeyError) as e:
+        except ValidationError as e:
             logger.warning(
                 "gap_extraction_json_parse_failed",
                 error=str(e),
                 topic=topic,
+                raw_output=response if "response" in locals() else None,
             )
             return []
 
@@ -78,6 +89,10 @@ class GapExtractor:
         """Format limitations from all atoms into a block for the prompt."""
         lines = []
         for atom in atoms:
+            if atom.methods:
+                lines.append(
+                    f"- Paper [{atom.paper_id}] methods: {', '.join(atom.methods)}"
+                )
             if atom.limitations:
                 header = f"Paper [{atom.paper_id}]: {atom.title}"
                 for lim in atom.limitations:
@@ -85,7 +100,12 @@ class GapExtractor:
             if atom.claims:
                 for claim in atom.claims:
                     lines.append(f"- Paper [{atom.paper_id}] claims: {claim}")
-        return "\n".join(lines) if lines else "No limitations found."
+            if not atom.methods and not atom.limitations and not atom.claims:
+                lines.append(
+                    f"- Paper [{atom.paper_id}] title: {atom.title}. "
+                    f"Abstract: {atom.abstract[:240].strip()}"
+                )
+        return "\n".join(lines)
 
     async def find_gaps_from_clusters(
         self, db: AsyncSession, top_k: int = 25

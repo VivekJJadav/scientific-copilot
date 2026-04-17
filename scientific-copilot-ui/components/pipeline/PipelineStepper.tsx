@@ -124,7 +124,7 @@ function StageConnector({ completed }: { completed: boolean }) {
 }
 
 function ElapsedTimer() {
-  const { isRunning, runningStage } = useAppStore()
+  const { isRunning } = useAppStore()
   const [elapsed, setElapsed] = useState(0)
   const [startTime] = useState(() => Date.now())
 
@@ -157,7 +157,7 @@ function ElapsedTimer() {
 export function PipelineStepper() {
   const pipelineState = usePipelineState()
   const { stageStatus, isRunning, runningStage, counts } = pipelineState
-  const { openDrawerWith } = useAppStore()
+  const { openDrawerWith, taskProgress, taskMessage } = useAppStore()
 
   const handleStageClick = (stage: Stage) => {
     const currentIndex = DISPLAY_STAGES.indexOf(stage)
@@ -215,6 +215,14 @@ export function PipelineStepper() {
             <span className="text-[9px] font-mono tracking-wider text-signal-cyan">
               {runningStage ? `${runningStage.toUpperCase()}` : 'PROCESSING'}
             </span>
+            <span className="text-[9px] font-mono tracking-wider text-signal-cyan/60">
+              {taskProgress}%
+            </span>
+            {taskMessage && (
+              <span className="text-[9px] font-mono tracking-wider text-signal-cyan/60 max-w-[180px] truncate">
+                {taskMessage}
+              </span>
+            )}
             <ElapsedTimer />
           </div>
         ) : (

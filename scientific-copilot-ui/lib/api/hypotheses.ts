@@ -1,5 +1,6 @@
 import { apiClient } from './client'
-import type { Hypothesis, HypothesisStatus, PaginatedHypotheses, DebateSummary } from '@/lib/types/hypothesis'
+import type { QueuedTaskResponse } from './tasks'
+import type { Hypothesis, HypothesisStatus, PaginatedHypotheses } from '@/lib/types/hypothesis'
 
 export const getHypotheses = async (params?: {
   skip?: number
@@ -15,25 +16,17 @@ export const getHypothesis = async (id: string): Promise<Hypothesis> => {
   return data
 }
 
-export const generateHypotheses = async (): Promise<{
-  gaps_found: number
-  hypotheses_generated: number
-  hypotheses_discarded: number
-}> => {
-  const { data } = await apiClient.post('/hypotheses/generate')
+export const generateHypotheses = async (): Promise<QueuedTaskResponse> => {
+  const { data } = await apiClient.post<QueuedTaskResponse>('/hypotheses/generate')
   return data
 }
 
-export const runExtraction = async (): Promise<{
-  processed: number
-  failed: number
-  embedded: number
-}> => {
-  const { data } = await apiClient.post('/extract')
+export const runExtraction = async (): Promise<QueuedTaskResponse> => {
+  const { data } = await apiClient.post<QueuedTaskResponse>('/extract')
   return data
 }
 
-export const runAllDebates = async (): Promise<DebateSummary> => {
-  const { data } = await apiClient.post<DebateSummary>('/debate/run-all')
+export const runAllDebates = async (): Promise<QueuedTaskResponse> => {
+  const { data } = await apiClient.post<QueuedTaskResponse>('/debate/run-all')
   return data
 }

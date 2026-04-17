@@ -4,12 +4,25 @@ import json
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from pydantic import BaseModel, Field, ValidationError
 
 from app.db.models import Experiment, ExperimentResult, Gap, HypothesisModel
 from app.llm.router import LLMRouter, LLMUnavailableError
 from app.llm.prompts import RESULT_ANALYSIS_PROMPT, NEGATIVE_RESULT_GAP_PROMPT
 
 logger = structlog.get_logger(__name__)
+
+
+class ResultAnalysisResponseSchema(BaseModel):
+    outcome: str = "inconclusive"
+    result_summary: str = "Analysis completed."
+    lessons_learned: list[str] = Field(default_factory=list)
+    failure_reason: str | None = None
+
+
+class FailureGapResponseSchema(BaseModel):
+    gap_type: str = "negative_result"
+    gap_description: str
 
 
 class ResultAnalyzer:
@@ -33,25 +46,36 @@ class ResultAnalyzer:
 
         try:
             response = await self.llm.complete(prompt, expect_json=True)
-            parsed = json.loads(response)
+            parsed = ResultAnalysisResponseSchema.model_validate_json(response)
 
-            outcome = parsed.get("outcome", "inconclusive").lower()
+            outcome = parsed.outcome.lower()
             if outcome not in ("validated", "failed", "inconclusive"):
                 outcome = "inconclusive"
 
-            lessons = parsed.get("lessons_learned", [])
-            if not isinstance(lessons, list):
-                lessons = [str(lessons)]
+            lessons = parsed.lessons_learned
             if not lessons:
                 lessons = ["No specific lessons extracted."]
 
             return {
                 "outcome": outcome,
-                "result_summary": parsed.get("result_summary", "Analysis completed."),
+                "result_summary": parsed.result_summary,
                 "lessons_learned": lessons,
-                "failure_reason": parsed.get("failure_reason"),
+                "failure_reason": parsed.failure_reason,
             }
 
+        except ValidationError as e:
+            logger.warning(
+                "result_analysis_validation_failed",
+                error=str(e),
+                experiment_id=experiment_id,
+                raw_output=response if "response" in locals() else None,
+            )
+            return {
+                "outcome": "inconclusive",
+                "result_summary": "Error during LLM analysis of results.",
+                "lessons_learned": ["Failed to extract reliable lessons from metrics."],
+                "failure_reason": None,
+            }
         except Exception as e:
             logger.warning("result_analysis_parse_failed", error=str(e), experiment_id=experiment_id)
             return {
@@ -134,11 +158,11 @@ class ResultAnalyzer:
                 lessons_learned=", ".join(analysis.get("lessons_learned", [])),
             )
             response = await self.llm.complete(prompt, expect_json=True)
-            parsed = json.loads(response)
+            parsed = FailureGapResponseSchema.model_validate_json(response)
 
             gap = Gap(
-                gap_type=parsed.get("gap_type", "negative_result"),
-                gap_description=parsed.get("gap_description", f"Failed: {hypothesis.title}"),
+                gap_type=parsed.gap_type,
+                gap_description=parsed.gap_description,
                 source_paper_ids=hypothesis.source_paper_ids or [],
                 similarity=0.0,
                 used=False,
@@ -147,6 +171,22 @@ class ResultAnalyzer:
             logger.info("failure_gap_created", hypothesis_title=hypothesis.title)
             return gap
 
+        except ValidationError as e:
+            logger.warning(
+                "failure_gap_validation_failed",
+                error=str(e),
+                raw_output=response if "response" in locals() else None,
+            )
+            # Fallback: create a simple gap without LLM
+            gap = Gap(
+                gap_type="negative_result",
+                gap_description=f"Failed hypothesis '{hypothesis.title}': {analysis.get('result_summary', '')}",
+                source_paper_ids=hypothesis.source_paper_ids or [],
+                similarity=0.0,
+                used=False,
+            )
+            db.add(gap)
+            return gap
         except Exception as e:
             logger.warning("failure_gap_creation_failed", error=str(e))
             # Fallback: create a simple gap without LLM

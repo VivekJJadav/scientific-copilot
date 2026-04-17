@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { getPapers, getPaper } from '@/lib/api/papers'
 
-export function usePapers(skip = 0, limit = 50) {
+export function usePapers(skip = 0, limit = 2) {
   return useQuery({
     queryKey: ['papers', skip, limit],
     queryFn: () => getPapers({ skip, limit }),

@@ -1,13 +1,9 @@
 import { apiClient } from './client'
+import type { QueuedTaskResponse } from './tasks'
 import type { ClusterListResponse, DatasetListResponse } from '@/lib/types/cluster'
 
-export const runClustering = async (): Promise<{
-  clusters_created: number
-  papers_clustered: number
-  datasets_found: number
-  gaps_found: number
-}> => {
-  const { data } = await apiClient.post('/clustering/run')
+export const runClustering = async (): Promise<QueuedTaskResponse> => {
+  const { data } = await apiClient.post<QueuedTaskResponse>('/clustering/run')
   return data
 }
 

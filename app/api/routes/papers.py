@@ -13,7 +13,7 @@ router = APIRouter()
 @router.get("", response_model=PaperListResponse)
 async def list_papers(
     skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(2, ge=1, le=100),
     db: AsyncSession = Depends(get_session)
 ):
     count_stmt = select(func.count()).select_from(Paper)

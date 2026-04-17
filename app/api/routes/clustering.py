@@ -1,7 +1,7 @@
 """API routes for paper clustering and dataset registry."""
 
 import structlog
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import desc, func
@@ -10,22 +10,31 @@ from app.db.session import get_session
 from app.db.models import PaperCluster, DatasetRegistry
 from app.clustering.cluster_service import ClusterService
 from app.clustering.dataset_extractor import DatasetExtractor
+from app.api.routes.tasks import create_task, run_in_background
+from app.api.rate_limit import rate_limit
 
 logger = structlog.get_logger(__name__)
 
 router = APIRouter()
 
 
+async def _run_clustering_task(db: AsyncSession):
+    service = ClusterService()
+    return await service.run_full_pipeline(db)
+
 @router.post("/run")
-async def run_clustering(db: AsyncSession = Depends(get_session)):
+async def run_clustering(
+    background_tasks: BackgroundTasks,
+    _rate_limited: None = Depends(rate_limit()),
+):
     """Run full clustering pipeline: HDBSCAN → dataset extraction → gap finding.
 
     Returns:
-        {clusters_created, papers_clustered, datasets_found, gaps_found}
+        { task_id, status: queued }
     """
-    service = ClusterService()
-    result = await service.run_full_pipeline(db)
-    return result
+    task_id = create_task("cluster")
+    background_tasks.add_task(run_in_background, task_id, _run_clustering_task)
+    return {"task_id": task_id, "status": "queued"}
 
 
 @router.get("/clusters")
@@ -50,7 +59,10 @@ async def list_clusters(db: AsyncSession = Depends(get_session)):
 
 
 @router.post("/extract-datasets")
-async def extract_datasets(db: AsyncSession = Depends(get_session)):
+async def extract_datasets(
+    db: AsyncSession = Depends(get_session),
+    _rate_limited: None = Depends(rate_limit()),
+):
     """Run dataset extraction only, without re-clustering.
 
     Returns:

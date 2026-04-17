@@ -1,4 +1,5 @@
 import { apiClient } from './client'
+import type { QueuedTaskResponse } from './tasks'
 import type { Experiment, PaginatedExperiments } from '@/lib/types/experiment'
 
 export const getExperiments = async (params?: {
@@ -14,11 +15,7 @@ export const getExperiment = async (id: string): Promise<Experiment> => {
   return data
 }
 
-export const runExperiments = async (): Promise<{
-  ran: number
-  completed: number
-  failed: number
-}> => {
-  const { data } = await apiClient.post('/experiments/run')
+export const runExperiments = async (): Promise<QueuedTaskResponse> => {
+  const { data } = await apiClient.post<QueuedTaskResponse>('/experiments/run')
   return data
 }

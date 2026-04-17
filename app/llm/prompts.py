@@ -3,12 +3,12 @@
 Every prompt used in the system lives here — do not scatter prompts across files.
 """
 
-EXTRACTION_PROMPT = """From this abstract extract:
+EXTRACTION_PROMPT = """From this paper text extract:
 1. Core methods used (list of short method names, e.g. "PPO", "LoRA", "RLHF")
 2. Limitations stated by the authors (direct quotes or close paraphrases)
 3. Key empirical claims made (what the paper claims to show)
 
-Abstract: {abstract}
+Paper text: {abstract}
 
 Respond in JSON only. No preamble. Format:
 {{

@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import desc
@@ -27,7 +27,7 @@ class ReviewService:
             raise HTTPException(status_code=400, detail=f"Hypothesis is in {hypothesis.status} state, not pending.")
             
         hypothesis.status = "approved"
-        hypothesis.approved_at = datetime.utcnow()
+        hypothesis.approved_at = datetime.now(UTC)
         
         # Create an experiment record automatically
         from app.db.models import Experiment

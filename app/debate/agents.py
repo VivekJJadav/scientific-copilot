@@ -1,12 +1,21 @@
 import time
-import json
 import structlog
+from pydantic import BaseModel, Field, ValidationError
 from app.debate.state import DebateState
 from app.llm.router import LLMRouter
 from app.llm.prompts import PROPOSER_PROMPT, CRITIC_PROMPT, REBUTTAL_PROMPT, ARBITER_PROMPT, build_arbiter_prompt_with_examples
 from app.config.settings import settings
 
 logger = structlog.get_logger(__name__)
+
+
+class ArbiterResponseSchema(BaseModel):
+    verdict: str = "FAIL"
+    final_novelty_score: float = 0.0
+    final_feasibility_score: float = 0.0
+    surviving_risks: list[str] = Field(default_factory=list)
+    rejection_reason: str = "No reason provided by Arbiter."
+    arbiter_notes: str = ""
 
 def _format_papers(papers) -> str:
     return "\n\n".join([
@@ -33,7 +42,7 @@ async def proposer_node(state: DebateState) -> DebateState:
     response = await llm.complete(prompt)
     
     state["proposal"] = response
-    state["round"] = state.get("round", 0) + 1
+    state["round"] = 0
     
     logger.info(
         "debate_node_executed",
@@ -66,6 +75,10 @@ async def critic_node(state: DebateState) -> DebateState:
     critiques.append(response)
     state["critiques"] = critiques
     
+    # We are in round N
+    current_round = len(critiques)
+    state["round"] = current_round
+    
     logger.info(
         "debate_node_executed",
         agent="critic",
@@ -95,13 +108,10 @@ async def rebuttal_node(state: DebateState) -> DebateState:
     rebuttals.append(response)
     state["rebuttals"] = rebuttals
     
-    # Increment round in rebuttal as well to progress the cycle
-    state["round"] += 1
-    
     logger.info(
         "debate_node_executed",
         agent="rebuttal",
-        round=state["round"] - 1, # log the round we were just in
+        round=state["round"],
         latency=time.monotonic() - start_time,
         hypothesis_id=state["hypothesis_id"]
     )
@@ -146,40 +156,46 @@ async def arbiter_node(state: DebateState) -> DebateState:
     response = await llm.complete(prompt, expect_json=True, force_json_object=True)
     
     try:
-        parsed = json.loads(response)
-    except json.JSONDecodeError:
+        parsed = ArbiterResponseSchema.model_validate_json(response)
+    except ValidationError as e:
+        logger.warning(
+            "arbiter_validation_failed",
+            error=str(e),
+            raw_output=response,
+            hypothesis_id=state["hypothesis_id"],
+        )
         # Fallback if invalid JSON
-        parsed = {
-            "verdict": "FAIL",
-            "final_novelty_score": getattr(hypothesis, "novelty_score", 0.0),
-            "final_feasibility_score": getattr(hypothesis, "feasibility_score", 0.0),
-            "surviving_risks": [],
-            "rejection_reason": "Arbiter returned invalid JSON format.",
-            "arbiter_notes": "JSON parsing error."
-        }
+        parsed = ArbiterResponseSchema(
+            verdict="FAIL",
+            final_novelty_score=getattr(hypothesis, "novelty_score", 0.0),
+            final_feasibility_score=getattr(hypothesis, "feasibility_score", 0.0),
+            surviving_risks=[],
+            rejection_reason="Arbiter returned invalid JSON format.",
+            arbiter_notes="JSON parsing error.",
+        )
         
-    verdict = parsed.get("verdict", "FAIL")
+    verdict = parsed.verdict
     state["arbiter_verdict"] = verdict
     
     # Needs to be a new object or we update in place depending on architecture. 
     # State has `final_hypothesis` and `rejection_reason`.
     if verdict == "PASS":
-        hypothesis.novelty_score = float(parsed.get("final_novelty_score", hypothesis.novelty_score))
-        hypothesis.feasibility_score = float(parsed.get("final_feasibility_score", hypothesis.feasibility_score))
+        hypothesis.novelty_score = float(parsed.final_novelty_score or hypothesis.novelty_score)
+        hypothesis.feasibility_score = float(parsed.final_feasibility_score or hypothesis.feasibility_score)
         
         # Merge new risks with existing risks to be safe
         existing_risks = hypothesis.risk_factors or []
-        new_risks = parsed.get("surviving_risks", [])
+        new_risks = parsed.surviving_risks
         hypothesis.risk_factors = list(set(existing_risks + new_risks))
         
         state["final_hypothesis"] = hypothesis
         state["rejection_reason"] = None
     else:
         state["final_hypothesis"] = None
-        state["rejection_reason"] = parsed.get("rejection_reason", "No reason provided by Arbiter.")
+        state["rejection_reason"] = parsed.rejection_reason
         
     # arbiter notes can be saved to the object
-    hypothesis.arbiter_notes = parsed.get("arbiter_notes", "")
+    hypothesis.arbiter_notes = parsed.arbiter_notes
         
     logger.info(
         "debate_node_executed",
@@ -192,4 +208,3 @@ async def arbiter_node(state: DebateState) -> DebateState:
     )
     
     return state
-

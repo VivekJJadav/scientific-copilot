@@ -1,4 +1,5 @@
 import { apiClient } from './client'
+import type { QueuedTaskResponse } from './tasks'
 
 export interface FeedbackResult {
   experiments_analyzed: number
@@ -7,8 +8,8 @@ export interface FeedbackResult {
   new_hypotheses_generated: number
 }
 
-export const runFeedbackLoop = async (): Promise<FeedbackResult> => {
-  const { data } = await apiClient.post<FeedbackResult>('/feedback/run')
+export const runFeedbackLoop = async (): Promise<QueuedTaskResponse> => {
+  const { data } = await apiClient.post<QueuedTaskResponse>('/feedback/run')
   return data
 }
 

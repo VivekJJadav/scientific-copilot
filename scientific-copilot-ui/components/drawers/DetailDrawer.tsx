@@ -65,6 +65,21 @@ export function DetailDrawer() {
                 <span className="text-[9px] font-mono text-text-muted tabular-nums">{paper.published_year}</span>
               </div>
 
+              {paper.arxiv_status === 'extraction_failed' && (
+                <div className="rounded-lg border border-signal-red/30 bg-signal-red/8 p-3">
+                  <p className="text-[8px] font-mono uppercase tracking-[0.14em] text-signal-red">
+                    Extraction Failed
+                  </p>
+                  <p className="mt-1 text-[10px] font-mono leading-relaxed text-text-secondary">
+                    The extractor could not reach the LLM backend. In this environment that usually means
+                    Ollama is not running on <span className="text-signal-cyan">localhost:11434</span>.
+                  </p>
+                  <p className="mt-2 text-[9px] font-mono leading-relaxed text-text-muted">
+                    Start Ollama, or configure a fallback API key, then clear and re-ingest or add a retry path for failed papers.
+                  </p>
+                </div>
+              )}
+
               {paper.authors && paper.authors.length > 0 && (
                 <div>
                   <p className="text-[7px] font-mono uppercase text-text-muted mb-1.5 tracking-[0.15em]">AUTHORS</p>

@@ -13,14 +13,19 @@ interface AppStore {
   drawerData: Record<string, unknown>
   isRunning: boolean
   runningStage: string | null
+  taskProgress: number
+  taskMessage: string | null
   newHypothesisIds: string[]
+  ingestLimit: number
 
   setSelectedNode: (node: SelectedNode | null) => void
   openDrawerWith: (drawer: DrawerType, data?: Record<string, unknown>) => void
   closeDrawer: () => void
   setRunning: (running: boolean, stage?: string) => void
+  setTaskProgress: (progress: number, message?: string | null) => void
   addNewHypothesisId: (id: string) => void
   clearNewHypothesisIds: () => void
+  setIngestLimit: (limit: number) => void
 }
 
 export const useAppStore = create<AppStore>((set) => ({
@@ -29,7 +34,10 @@ export const useAppStore = create<AppStore>((set) => ({
   drawerData: {},
   isRunning: false,
   runningStage: null,
+  taskProgress: 0,
+  taskMessage: null,
   newHypothesisIds: [],
+  ingestLimit: 2,
 
   setSelectedNode: (node) =>
     set({ selectedNode: node }),
@@ -41,7 +49,15 @@ export const useAppStore = create<AppStore>((set) => ({
     set({ openDrawer: null, drawerData: {} }),
 
   setRunning: (running, stage) =>
-    set({ isRunning: running, runningStage: running ? (stage ?? null) : null }),
+    set({
+      isRunning: running,
+      runningStage: running ? (stage ?? null) : null,
+      taskProgress: running ? 0 : 0,
+      taskMessage: running ? 'Queued' : null,
+    }),
+
+  setTaskProgress: (progress, message = null) =>
+    set({ taskProgress: progress, taskMessage: message }),
 
   addNewHypothesisId: (id) =>
     set((state) => ({
@@ -50,4 +66,7 @@ export const useAppStore = create<AppStore>((set) => ({
 
   clearNewHypothesisIds: () =>
     set({ newHypothesisIds: [] }),
+
+  setIngestLimit: (limit) =>
+    set({ ingestLimit: limit }),
 }))

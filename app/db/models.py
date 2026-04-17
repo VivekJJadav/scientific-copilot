@@ -1,10 +1,15 @@
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, List, Optional
 from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
 from pgvector.sqlalchemy import Vector
+
+
+def _utcnow() -> datetime:
+    """Timezone-aware UTC timestamp helper."""
+    return datetime.now(UTC)
 
 
 class Paper(SQLModel, table=True):
@@ -17,11 +22,17 @@ class Paper(SQLModel, table=True):
     authors: List[dict[str, Any]] = Field(default_factory=list, sa_column=Column(JSONB))
     published_year: int
     pdf_url: str
+    full_text: Optional[str] = Field(default=None, sa_column=Column(Text))
+    text_chunks: List[str] = Field(default_factory=list, sa_column=Column(JSONB))
+    content_source: str = Field(default="abstract")
+    methods: List[str] = Field(default_factory=list, sa_column=Column(JSONB))
+    limitations: List[str] = Field(default_factory=list, sa_column=Column(JSONB))
+    claims: List[str] = Field(default_factory=list, sa_column=Column(JSONB))
     embedding: Optional[List[float]] = Field(default=None, sa_column=Column(Vector(384)))
-    arxiv_status: str = Field(default="raw")
+    arxiv_status: str = Field(default="raw", index=True)
     cluster_id: Optional[uuid.UUID] = Field(default=None, foreign_key="paper_clusters.id")
-    created_at: datetime = Field(default_factory=datetime.utcnow, sa_column=Column(DateTime(timezone=True), nullable=False))
-    updated_at: datetime = Field(default_factory=datetime.utcnow, sa_column=Column(DateTime(timezone=True), nullable=False, onupdate=datetime.utcnow))
+    created_at: datetime = Field(default_factory=_utcnow, sa_column=Column(DateTime(timezone=True), nullable=False))
+    updated_at: datetime = Field(default_factory=_utcnow, sa_column=Column(DateTime(timezone=True), nullable=False, onupdate=_utcnow))
 
 
 class HypothesisModel(SQLModel, table=True):
@@ -39,7 +50,7 @@ class HypothesisModel(SQLModel, table=True):
     hardware_requirement: str = Field(default="")
     source_paper_ids: List[str] = Field(default_factory=list, sa_column=Column(JSONB))
     gap_description: str = Field(sa_column=Column(Text, nullable=False))
-    status: str = Field(default="pending")
+    status: str = Field(default="pending", index=True)
     iteration_count: int = Field(default=0, sa_column=Column(Integer, nullable=False))
     parent_hypothesis_id: Optional[uuid.UUID] = Field(default=None, sa_column=Column(String, nullable=True))
 
@@ -48,9 +59,16 @@ class HypothesisModel(SQLModel, table=True):
     rejection_reason: Optional[str] = Field(default=None, sa_column=Column(Text))
     debate_rounds: Optional[int] = Field(default=None, sa_column=Column(Integer))
     arbiter_notes: Optional[str] = Field(default=None, sa_column=Column(Text))
+    debate_transcript: Optional[List[dict[str, Any]]] = Field(default=None, sa_column=Column(JSONB))
 
-    created_at: datetime = Field(default_factory=datetime.utcnow, sa_column=Column(DateTime(timezone=True), nullable=False))
-    updated_at: datetime = Field(default_factory=datetime.utcnow, sa_column=Column(DateTime(timezone=True), nullable=False, onupdate=datetime.utcnow))
+    created_at: datetime = Field(default_factory=_utcnow, sa_column=Column(DateTime(timezone=True), nullable=False))
+    updated_at: datetime = Field(default_factory=_utcnow, sa_column=Column(DateTime(timezone=True), nullable=False, onupdate=_utcnow))
+
+    def passes_threshold(self, novelty_threshold: float, feasibility_threshold: float) -> bool:
+        return (
+            self.novelty_score >= novelty_threshold
+            and self.feasibility_score >= feasibility_threshold
+        )
 
 
 class Experiment(SQLModel, table=True):
@@ -58,7 +76,7 @@ class Experiment(SQLModel, table=True):
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     hypothesis_id: uuid.UUID = Field(foreign_key="hypotheses.id", nullable=False)
-    status: str = Field(default="queued")
+    status: str = Field(default="queued", index=True)
     experiment_dir: str = Field(nullable=False)
     container_id: Optional[str] = Field(default=None)
     results: Optional[dict] = Field(default=None, sa_column=Column(JSONB))
@@ -68,7 +86,7 @@ class Experiment(SQLModel, table=True):
     error_log: Optional[str] = Field(default=None, sa_column=Column(Text))
     started_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True)))
     completed_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True)))
-    created_at: datetime = Field(default_factory=datetime.utcnow, sa_column=Column(DateTime(timezone=True), nullable=False))
+    created_at: datetime = Field(default_factory=_utcnow, sa_column=Column(DateTime(timezone=True), nullable=False))
 
 
 class PaperCluster(SQLModel, table=True):
@@ -79,7 +97,7 @@ class PaperCluster(SQLModel, table=True):
     top_terms: List[str] = Field(default_factory=list, sa_column=Column(JSONB))
     paper_ids: List[str] = Field(default_factory=list, sa_column=Column(JSONB))
     centroid_embedding: Optional[List[float]] = Field(default=None, sa_column=Column(Vector(384)))
-    created_at: datetime = Field(default_factory=datetime.utcnow, sa_column=Column(DateTime(timezone=True), nullable=False))
+    created_at: datetime = Field(default_factory=_utcnow, sa_column=Column(DateTime(timezone=True), nullable=False))
 
 
 class ExperimentResult(SQLModel, table=True):
@@ -92,7 +110,7 @@ class ExperimentResult(SQLModel, table=True):
     metrics: dict = Field(default_factory=dict, sa_column=Column(JSONB))
     result_summary: str = Field(sa_column=Column(Text, nullable=False))
     lessons_learned: List[str] = Field(default_factory=list, sa_column=Column(JSONB))
-    created_at: datetime = Field(default_factory=datetime.utcnow, sa_column=Column(DateTime(timezone=True), nullable=False))
+    created_at: datetime = Field(default_factory=_utcnow, sa_column=Column(DateTime(timezone=True), nullable=False))
 
 
 class Gap(SQLModel, table=True):
@@ -104,8 +122,8 @@ class Gap(SQLModel, table=True):
     source_paper_ids: List[str] = Field(default_factory=list, sa_column=Column(JSONB))
     cluster_id: Optional[uuid.UUID] = Field(default=None, foreign_key="paper_clusters.id")
     similarity: float = Field(default=0.0)
-    used: bool = Field(default=False, sa_column=Column(Boolean, nullable=False, server_default="false"))
-    created_at: datetime = Field(default_factory=datetime.utcnow, sa_column=Column(DateTime(timezone=True), nullable=False))
+    used: bool = Field(default=False, sa_column=Column(Boolean, nullable=False, server_default="false", index=True))
+    created_at: datetime = Field(default_factory=_utcnow, sa_column=Column(DateTime(timezone=True), nullable=False))
 
 
 class DatasetRegistry(SQLModel, table=True):
@@ -115,5 +133,5 @@ class DatasetRegistry(SQLModel, table=True):
     name: str = Field(sa_column=Column(String, unique=True, index=True, nullable=False))
     mention_count: int = Field(default=0)
     paper_ids: List[str] = Field(default_factory=list, sa_column=Column(JSONB))
-    created_at: datetime = Field(default_factory=datetime.utcnow, sa_column=Column(DateTime(timezone=True), nullable=False))
-    updated_at: datetime = Field(default_factory=datetime.utcnow, sa_column=Column(DateTime(timezone=True), nullable=False, onupdate=datetime.utcnow))
+    created_at: datetime = Field(default_factory=_utcnow, sa_column=Column(DateTime(timezone=True), nullable=False))
+    updated_at: datetime = Field(default_factory=_utcnow, sa_column=Column(DateTime(timezone=True), nullable=False, onupdate=_utcnow))

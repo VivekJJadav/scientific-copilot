@@ -1,9 +1,9 @@
 """HypothesisGenerator: produces grounded Hypothesis objects from gaps."""
 
-import json
 import uuid
 import structlog
-from datetime import datetime
+from pydantic import BaseModel, ValidationError, Field
+from datetime import UTC, datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import text, func
@@ -13,12 +13,32 @@ from app.core.atoms import ResearchAtom
 from app.db.models import Paper, HypothesisModel, Gap, DatasetRegistry
 from app.llm.router import LLMRouter, LLMUnavailableError
 from app.llm.prompts import HYPOTHESIS_GENERATION_PROMPT, NOVELTY_CHECK_PROMPT
-from app.reasoning.hypothesis import Hypothesis
 from app.reasoning.gap_extractor import GapExtractor
-from app.extraction.embedder import PaperEmbedder
+from app.extraction.embedder import get_embedder
 
 logger = structlog.get_logger(__name__)
 
+
+class HypothesisResponseSchema(BaseModel):
+    title: str = ""
+    motivation: str = ""
+    core_claim: str = ""
+    method_sketch: str = ""
+    expected_outcome: str = ""
+    risk_factors: list[str] = Field(default_factory=list)
+    novelty_score: float = 0.0
+    feasibility_score: float = 0.0
+    hardware_requirement: str = ""
+
+class NoveltyResponseSchema(BaseModel):
+    novelty_score: float
+    reasoning: str = ""
+
+
+class GapLLMResponseSchema(BaseModel):
+    description: str
+    source_paper_ids: list[str] = Field(default_factory=list)
+    gap_type: str = "unknown"
 
 class HypothesisGenerator:
     """Generates grounded hypotheses from research gaps."""
@@ -26,11 +46,11 @@ class HypothesisGenerator:
     def __init__(self):
         self.llm = LLMRouter()
         self.gap_extractor = GapExtractor()
-        self.embedder = PaperEmbedder()
+        self.embedder = get_embedder()
 
     async def generate(
         self, gap: dict, source_atoms: list[ResearchAtom], db: AsyncSession
-    ) -> Hypothesis | None:
+    ) -> HypothesisModel | None:
         """Generate a single hypothesis from a gap and source papers.
 
         Uses pgvector cosine similarity for RAG retrieval of related papers
@@ -47,14 +67,14 @@ class HypothesisGenerator:
             source_ids.add(gap_id)
 
         # Retrieve top-5 similar papers via pgvector for grounding
+        # NOTE: RAG papers are used for prompt context only, NOT added to source_paper_ids
+        # to avoid connecting hypotheses to papers they weren't actually derived from.
         rag_context, rag_ids = await self._retrieve_similar_papers(
             gap.get("description", ""), db
         )
         if rag_context:
             paper_summaries += "\n\nAdditional related papers (retrieved by similarity):\n"
             paper_summaries += rag_context
-            for ret_id in rag_ids:
-                source_ids.add(ret_id)
 
         if not source_ids:
             logger.warning("hypothesis_no_sources", gap=gap.get("description", ""))
@@ -76,24 +96,24 @@ class HypothesisGenerator:
             response = await self.llm.complete(
                 prompt, expect_json=True, force_json_object=True
             )
-            parsed = json.loads(response)
+            parsed = HypothesisResponseSchema.model_validate_json(response)
 
-            hypothesis = Hypothesis(
-                id=str(uuid.uuid4()),
-                title=parsed.get("title", ""),
-                motivation=parsed.get("motivation", ""),
-                core_claim=parsed.get("core_claim", ""),
-                method_sketch=parsed.get("method_sketch", ""),
-                expected_outcome=parsed.get("expected_outcome", ""),
-                risk_factors=parsed.get("risk_factors", []),
-                novelty_score=parsed.get("novelty_score", 0.0),
-                feasibility_score=parsed.get("feasibility_score", 0.0),
-                hardware_requirement=parsed.get("hardware_requirement", ""),
+            hypothesis = HypothesisModel(
+                id=uuid.uuid4(),
+                title=parsed.title,
+                motivation=parsed.motivation,
+                core_claim=parsed.core_claim,
+                method_sketch=parsed.method_sketch,
+                expected_outcome=parsed.expected_outcome,
+                risk_factors=parsed.risk_factors,
+                novelty_score=parsed.novelty_score,
+                feasibility_score=parsed.feasibility_score,
+                hardware_requirement=parsed.hardware_requirement,
                 source_paper_ids=list(source_ids),
                 gap_description=gap.get("description", ""),
                 status="pending",
                 iteration_count=0,
-                created_at=datetime.utcnow(),
+                created_at=datetime.now(UTC),
             )
 
             # Run novelty check against existing hypotheses
@@ -124,11 +144,12 @@ class HypothesisGenerator:
             )
             return hypothesis
 
-        except (json.JSONDecodeError, KeyError) as e:
+        except ValidationError as e:
             logger.warning(
                 "hypothesis_generation_json_parse_failed",
                 error=str(e),
                 gap=gap.get("description", ""),
+                raw_output=response if "response" in locals() else None,
             )
             return None
 
@@ -179,22 +200,7 @@ class HypothesisGenerator:
             papers = result.scalars().all()
 
             if papers:
-                atoms = [
-                    ResearchAtom(
-                        paper_id=p.arxiv_id,
-                        title=p.title,
-                        abstract=p.abstract,
-                        authors=p.authors or [],
-                        published_year=p.published_year,
-                        pdf_url=p.pdf_url,
-                        methods=[],
-                        limitations=[],
-                        claims=[],
-                        embedding=[float(x) for x in p.embedding] if p.embedding is not None else None,
-                        arxiv_status=p.arxiv_status,
-                    )
-                    for p in papers
-                ]
+                atoms = [ResearchAtom.from_paper(p) for p in papers]
                 extracted_gaps = await self.gap_extractor.extract_gaps(atoms, settings.ARXIV_QUERY)
 
                 # Also find cluster-aware gaps
@@ -217,22 +223,7 @@ class HypothesisGenerator:
             Paper.arxiv_status.in_(["processed", "embedded"])
         )
         all_papers = (await db.execute(all_papers_stmt)).scalars().all()
-        all_atoms = [
-            ResearchAtom(
-                paper_id=p.arxiv_id,
-                title=p.title,
-                abstract=p.abstract,
-                authors=p.authors or [],
-                published_year=p.published_year,
-                pdf_url=p.pdf_url,
-                methods=[],
-                limitations=[],
-                claims=[],
-                embedding=[float(x) for x in p.embedding] if p.embedding is not None else None,
-                arxiv_status=p.arxiv_status,
-            )
-            for p in all_papers
-        ]
+        all_atoms = [ResearchAtom.from_paper(p) for p in all_papers]
 
         # Generate hypotheses for up to 10 gaps to yield more hypotheses
         for gap in gaps[:10]:
@@ -269,7 +260,7 @@ class HypothesisGenerator:
         names = (await db.execute(stmt)).scalars().all()
         return ", ".join(names) if names else ""
 
-    async def _check_novelty(self, hypothesis: Hypothesis, db: AsyncSession) -> float:
+    async def _check_novelty(self, hypothesis: HypothesisModel, db: AsyncSession) -> float:
         """Check novelty of a hypothesis against existing ones."""
         stmt = select(HypothesisModel.title)
         result = await db.execute(stmt)
@@ -287,17 +278,25 @@ class HypothesisGenerator:
 
         try:
             response = await self.llm.complete(prompt, expect_json=True)
-            parsed = json.loads(response)
-            score = float(parsed.get("novelty_score", hypothesis.novelty_score))
+            parsed = NoveltyResponseSchema.model_validate_json(response)
+            score = float(parsed.novelty_score)
 
             logger.info(
                 "novelty_check_complete",
                 hypothesis_id=hypothesis.id,
                 novelty_score=score,
-                reasoning=parsed.get("reasoning", ""),
+                reasoning=parsed.reasoning,
             )
             return score
 
+        except ValidationError as e:
+            logger.warning(
+                "novelty_check_failed",
+                hypothesis_id=hypothesis.id,
+                error=str(e),
+                raw_output=response if "response" in locals() else None,
+            )
+            return hypothesis.novelty_score
         except Exception as e:
             logger.warning(
                 "novelty_check_failed",
@@ -339,25 +338,9 @@ class HypothesisGenerator:
             logger.warning("rag_retrieval_failed", error=str(e))
             return "", []
 
-    async def _persist_hypothesis(self, hypothesis: Hypothesis, db: AsyncSession):
+    async def _persist_hypothesis(self, hypothesis: HypothesisModel, db: AsyncSession):
         """Save a Hypothesis to the database."""
-        model = HypothesisModel(
-            id=uuid.UUID(hypothesis.id),
-            title=hypothesis.title,
-            motivation=hypothesis.motivation,
-            core_claim=hypothesis.core_claim,
-            method_sketch=hypothesis.method_sketch,
-            expected_outcome=hypothesis.expected_outcome,
-            risk_factors=hypothesis.risk_factors,
-            novelty_score=hypothesis.novelty_score,
-            feasibility_score=hypothesis.feasibility_score,
-            hardware_requirement=hypothesis.hardware_requirement,
-            source_paper_ids=hypothesis.source_paper_ids,
-            gap_description=hypothesis.gap_description,
-            status=hypothesis.status,
-            iteration_count=hypothesis.iteration_count,
-        )
-        db.add(model)
+        db.add(hypothesis)
         await db.commit()
 
     def _build_paper_summaries(self, atoms: list[ResearchAtom]) -> str:
