@@ -71,11 +71,11 @@ export function DetailDrawer() {
                     Extraction Failed
                   </p>
                   <p className="mt-1 text-[10px] font-mono leading-relaxed text-text-secondary">
-                    The extractor could not reach the LLM backend. In this environment that usually means
-                    Ollama is not running on <span className="text-signal-cyan">localhost:11434</span>.
+                    This paper did not finish extraction on an earlier pass. Now that the backend services are back,
+                    running extraction again will retry it.
                   </p>
                   <p className="mt-2 text-[9px] font-mono leading-relaxed text-text-muted">
-                    Start Ollama, or configure a fallback API key, then clear and re-ingest or add a retry path for failed papers.
+                    If it fails again after retry, then check the Ollama connection, configured model, or fallback LLM settings.
                   </p>
                 </div>
               )}

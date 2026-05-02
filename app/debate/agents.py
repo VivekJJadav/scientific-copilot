@@ -16,6 +16,8 @@ class ArbiterResponseSchema(BaseModel):
     surviving_risks: list[str] = Field(default_factory=list)
     rejection_reason: str = "No reason provided by Arbiter."
     arbiter_notes: str = ""
+    key_objections: list[str] = Field(default_factory=list)
+    addressed_prior_objections: list[str] = Field(default_factory=list)
 
 def _format_papers(papers) -> str:
     return "\n\n".join([
@@ -126,10 +128,10 @@ async def arbiter_node(state: DebateState) -> DebateState:
     
     # Load few-shot examples from past outcomes for Arbiter calibration
     from app.feedback.arbiter_trainer import ArbiterTrainer
-    from app.db.session import get_session
     from sqlalchemy.ext.asyncio import AsyncSession
     from sqlalchemy.orm import sessionmaker
     from app.db.session import engine
+    from app.db.models import DebateHistory
     
     few_shot_examples = []
     try:
@@ -140,7 +142,10 @@ async def arbiter_node(state: DebateState) -> DebateState:
     except Exception as e:
         logger.warning("arbiter_few_shot_load_failed", error=str(e))
     
-    # Build prompt with or without few-shot examples
+    # Get ancestor debate history (already formatted by run_debate)
+    debate_history = state.get("debate_history", "")
+    
+    # Build prompt with history, few-shot examples, and current debate
     prompt = build_arbiter_prompt_with_examples(
         hypothesis_title=hypothesis.title,
         core_claim=hypothesis.core_claim,
@@ -151,6 +156,7 @@ async def arbiter_node(state: DebateState) -> DebateState:
         rebuttals=state.get("rebuttals", []),
         hardware_requirement=hypothesis.hardware_requirement,
         few_shot_examples=few_shot_examples,
+        debate_history=debate_history,
     )
     
     response = await llm.complete(prompt, expect_json=True, force_json_object=True)
@@ -177,8 +183,6 @@ async def arbiter_node(state: DebateState) -> DebateState:
     verdict = parsed.verdict
     state["arbiter_verdict"] = verdict
     
-    # Needs to be a new object or we update in place depending on architecture. 
-    # State has `final_hypothesis` and `rejection_reason`.
     if verdict == "PASS":
         hypothesis.novelty_score = float(parsed.final_novelty_score or hypothesis.novelty_score)
         hypothesis.feasibility_score = float(parsed.final_feasibility_score or hypothesis.feasibility_score)
@@ -194,8 +198,9 @@ async def arbiter_node(state: DebateState) -> DebateState:
         state["final_hypothesis"] = None
         state["rejection_reason"] = parsed.rejection_reason
         
-    # arbiter notes can be saved to the object
+    # Arbiter notes and structured objections saved to state for persistence
     hypothesis.arbiter_notes = parsed.arbiter_notes
+    state["_arbiter_parsed"] = parsed.model_dump()
         
     logger.info(
         "debate_node_executed",
@@ -205,6 +210,9 @@ async def arbiter_node(state: DebateState) -> DebateState:
         hypothesis_id=state["hypothesis_id"],
         verdict=verdict,
         few_shot_count=len(few_shot_examples),
+        has_debate_history=bool(debate_history),
+        key_objections_count=len(parsed.key_objections),
+        addressed_prior_count=len(parsed.addressed_prior_objections),
     )
     
     return state

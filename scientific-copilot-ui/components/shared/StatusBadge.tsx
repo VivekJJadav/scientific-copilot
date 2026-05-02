@@ -3,7 +3,7 @@
 type BadgeStatus = string
 
 const STATUS_LABELS: Record<string, string> = {
-  extraction_failed: 'llm offline',
+  extraction_failed: 'needs retry',
 }
 
 const STATUS_STYLES: Record<string, { bg: string; text: string; dot: string; animate?: string }> = {

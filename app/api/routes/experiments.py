@@ -15,8 +15,8 @@ from app.api.rate_limit import rate_limit
 router = APIRouter()
 runner = TemplateRunner()
 
-async def _run_experiments_task(db: AsyncSession):
-    return await runner.run_approved(db)
+async def _run_experiments_task(db: AsyncSession, task_id: str | None = None):
+    return await runner.run_approved(db, task_id=task_id)
 
 @router.post("/run")
 async def run_experiments(

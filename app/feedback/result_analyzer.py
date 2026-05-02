@@ -45,7 +45,9 @@ class ResultAnalyzer:
         )
 
         try:
-            response = await self.llm.complete(prompt, expect_json=True)
+            response = await self.llm.complete(
+                prompt, expect_json=True, force_json_object=True
+            )
             parsed = ResultAnalysisResponseSchema.model_validate_json(response)
 
             outcome = parsed.outcome.lower()
@@ -150,6 +152,7 @@ class ResultAnalyzer:
         self, hypothesis: HypothesisModel, analysis: dict, db: AsyncSession
     ) -> Gap | None:
         """Create a new gap from a failed experiment using LLM."""
+        parent_marker = f"[parent_hypothesis:{hypothesis.id}] "
         try:
             prompt = NEGATIVE_RESULT_GAP_PROMPT.format(
                 hypothesis_title=hypothesis.title,
@@ -157,12 +160,14 @@ class ResultAnalyzer:
                 failure_reason=analysis.get("failure_reason") or "Unknown",
                 lessons_learned=", ".join(analysis.get("lessons_learned", [])),
             )
-            response = await self.llm.complete(prompt, expect_json=True)
+            response = await self.llm.complete(
+                prompt, expect_json=True, force_json_object=True
+            )
             parsed = FailureGapResponseSchema.model_validate_json(response)
 
             gap = Gap(
                 gap_type=parsed.gap_type,
-                gap_description=parsed.gap_description,
+                gap_description=f"{parent_marker}{parsed.gap_description}",
                 source_paper_ids=hypothesis.source_paper_ids or [],
                 similarity=0.0,
                 used=False,
@@ -180,7 +185,10 @@ class ResultAnalyzer:
             # Fallback: create a simple gap without LLM
             gap = Gap(
                 gap_type="negative_result",
-                gap_description=f"Failed hypothesis '{hypothesis.title}': {analysis.get('result_summary', '')}",
+                gap_description=(
+                    f"{parent_marker}Failed hypothesis '{hypothesis.title}': "
+                    f"{analysis.get('result_summary', '')}"
+                ),
                 source_paper_ids=hypothesis.source_paper_ids or [],
                 similarity=0.0,
                 used=False,
@@ -192,7 +200,10 @@ class ResultAnalyzer:
             # Fallback: create a simple gap without LLM
             gap = Gap(
                 gap_type="negative_result",
-                gap_description=f"Failed hypothesis '{hypothesis.title}': {analysis.get('result_summary', '')}",
+                gap_description=(
+                    f"{parent_marker}Failed hypothesis '{hypothesis.title}': "
+                    f"{analysis.get('result_summary', '')}"
+                ),
                 source_paper_ids=hypothesis.source_paper_ids or [],
                 similarity=0.0,
                 used=False,

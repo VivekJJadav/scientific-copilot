@@ -37,7 +37,7 @@ function getStageCount(stage: Stage, counts: ReturnType<typeof usePipelineState>
     case 'cluster': return counts.clusters > 0 ? `${counts.clusters}` : '—'
     case 'hypothesize': return counts.hypotheses > 0 ? `${counts.hypotheses}` : '—'
     case 'debate': return counts.debatedHypotheses > 0 ? `${counts.debatedHypotheses}` : '—'
-    case 'review': return counts.pendingHypotheses > 0 ? `${counts.pendingHypotheses}` : '—'
+    case 'review': return counts.reviewableHypotheses > 0 ? `${counts.reviewableHypotheses}` : '—'
     case 'run': return counts.experiments > 0 ? `${counts.experiments}` : '—'
     case 'feedback': return counts.maxIteration > 0 ? `${counts.maxIteration}` : '—'
     default: return '—'

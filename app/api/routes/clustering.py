@@ -18,9 +18,9 @@ logger = structlog.get_logger(__name__)
 router = APIRouter()
 
 
-async def _run_clustering_task(db: AsyncSession):
+async def _run_clustering_task(db: AsyncSession, task_id: str | None = None):
     service = ClusterService()
-    return await service.run_full_pipeline(db)
+    return await service.run_full_pipeline(db, task_id=task_id)
 
 @router.post("/run")
 async def run_clustering(

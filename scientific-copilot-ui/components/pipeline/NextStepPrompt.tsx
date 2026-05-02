@@ -72,7 +72,15 @@ export function NextStepPrompt() {
   }, [currentStage, runStage, openDrawerWith])
 
   const displayText = nextAction.text
-    .replace('{n}', String(counts.pendingHypotheses || counts.approvedHypotheses || 0))
+    .replace(
+      '{n}',
+      String(
+        counts.reviewableHypotheses ||
+          counts.pendingHypotheses ||
+          counts.approvedHypotheses ||
+          0
+      )
+    )
 
   return (
     <div className="absolute bottom-16 left-4 z-30">

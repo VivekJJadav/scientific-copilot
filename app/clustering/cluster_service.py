@@ -1,12 +1,13 @@
 """ClusterService: Orchestrates the full clustering pipeline."""
 
 import structlog
+from sqlalchemy import delete, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clustering.clusterer import PaperClusterer
 from app.clustering.dataset_extractor import DatasetExtractor
 from app.reasoning.gap_extractor import GapExtractor
-from app.db.models import Gap
+from app.db.models import Gap, Paper, PaperCluster
 
 logger = structlog.get_logger(__name__)
 
@@ -19,7 +20,11 @@ class ClusterService:
         self.dataset_extractor = DatasetExtractor()
         self.gap_extractor = GapExtractor()
 
-    async def run_full_pipeline(self, db: AsyncSession) -> dict:
+    async def run_full_pipeline(
+        self,
+        db: AsyncSession,
+        task_id: str | None = None,
+    ) -> dict:
         """Run complete clustering pipeline.
 
         Steps:
@@ -31,12 +36,43 @@ class ClusterService:
             Combined summary from all steps.
         """
         logger.info("cluster_service_pipeline_started")
+        if task_id:
+            from app.api.routes.tasks import update_task_status
+
+            update_task_status(
+                task_id,
+                "running",
+                progress=15,
+                message="Clustering embedded papers",
+            )
+
+        await self._reset_cluster_state(db)
 
         # Step 1: Cluster papers
         cluster_result = await self.clusterer.run(db)
 
+        if task_id:
+            from app.api.routes.tasks import update_task_status
+
+            update_task_status(
+                task_id,
+                "running",
+                progress=55,
+                message="Extracting dataset and benchmark mentions",
+            )
+
         # Step 2: Extract datasets
         dataset_result = await self.dataset_extractor.extract_from_papers(db)
+
+        if task_id:
+            from app.api.routes.tasks import update_task_status
+
+            update_task_status(
+                task_id,
+                "running",
+                progress=80,
+                message="Persisting cluster-aware research gaps",
+            )
 
         # Step 3: Find gaps from clusters
         gaps = await self.gap_extractor.find_gaps_from_clusters(db)
@@ -67,3 +103,14 @@ class ClusterService:
 
         logger.info("cluster_service_pipeline_completed", **summary)
         return summary
+
+    async def _reset_cluster_state(self, db: AsyncSession) -> None:
+        """Clear cluster-derived state so reruns replace prior clustering output."""
+        await db.execute(
+            delete(Gap).where(
+                Gap.gap_type == "cluster_insight"
+            )
+        )
+        await db.execute(update(Paper).values(cluster_id=None))
+        await db.execute(delete(PaperCluster))
+        await db.commit()

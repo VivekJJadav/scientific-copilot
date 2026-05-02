@@ -167,6 +167,61 @@ async def test_extraction_batch_survives_llm_timeout(monkeypatch):
     assert db.commit_calls == 1
 
 
+@pytest.mark.asyncio
+async def test_run_extraction_pipeline_retries_failed_papers(monkeypatch):
+    extractor = PaperExtractor()
+
+    retry_paper = SimpleNamespace(
+        id=uuid.uuid4(),
+        arxiv_id="paper-retry",
+        title="Retry me",
+        abstract="previously failed extraction",
+        authors=[],
+        published_year=2026,
+        pdf_url="https://example.com/retry.pdf",
+        methods=[],
+        limitations=[],
+        claims=[],
+        embedding=None,
+        arxiv_status="extraction_failed",
+        full_text=None,
+        text_chunks=[],
+        content_source="abstract",
+        updated_at=None,
+    )
+
+    class RetryDB:
+        def __init__(self, papers):
+            self._papers = papers
+
+        async def execute(self, stmt):
+            stmt_text = str(stmt)
+            if "WHERE papers.arxiv_status IN" in stmt_text:
+                return _ExecuteResult(titles=self._papers)
+            return _ExecuteResult(paper=self._papers[0])
+
+        async def commit(self):
+            return None
+
+    async def fake_extract_batch(atoms, db):
+        atoms[0].methods = ["LoRA"]
+        atoms[0].limitations = ["small sample"]
+        atoms[0].claims = ["works better"]
+        atoms[0].arxiv_status = "processed"
+        retry_paper.methods = atoms[0].methods
+        retry_paper.limitations = atoms[0].limitations
+        retry_paper.claims = atoms[0].claims
+        retry_paper.arxiv_status = "processed"
+        return atoms
+
+    monkeypatch.setattr(extractor, "extract_batch", fake_extract_batch)
+
+    summary = await extractor.run_extraction_pipeline(RetryDB([retry_paper]))
+
+    assert summary == {"processed": 1, "failed": 0}
+    assert retry_paper.arxiv_status == "processed"
+
+
 def test_gap_extractor_build_limitations_block_uses_real_paper_context():
     extractor = GapExtractor()
     atoms = [

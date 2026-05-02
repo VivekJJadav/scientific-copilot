@@ -18,9 +18,9 @@ logger = structlog.get_logger(__name__)
 router = APIRouter()
 
 
-async def _run_feedback_loop_task(db: AsyncSession):
+async def _run_feedback_loop_task(db: AsyncSession, task_id: str | None = None):
     loop = FeedbackLoop()
-    return await loop.run(db)
+    return await loop.run(db, task_id=task_id)
 
 @router.post("/run")
 async def run_feedback_loop(

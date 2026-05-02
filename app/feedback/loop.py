@@ -1,5 +1,6 @@
 """FeedbackLoop: Orchestrates the full feedback cycle — analyze → gaps → hypotheses."""
 
+import re
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -21,7 +22,11 @@ class FeedbackLoop:
         self.trainer = ArbiterTrainer()
         self.generator = HypothesisGenerator()
 
-    async def run(self, db: AsyncSession) -> dict:
+    async def run(
+        self,
+        db: AsyncSession,
+        task_id: str | None = None,
+    ) -> dict:
         """Run the full feedback loop.
 
         Steps:
@@ -35,6 +40,15 @@ class FeedbackLoop:
             Summary dict with counts.
         """
         logger.info("feedback_loop_started")
+        if task_id:
+            from app.api.routes.tasks import update_task_status
+
+            update_task_status(
+                task_id,
+                "running",
+                progress=15,
+                message="Analyzing completed experiments",
+            )
 
         # Step 1: Analyze experiments
         analysis_result = await self.analyzer.run_analysis_pipeline(db)
@@ -47,8 +61,19 @@ class FeedbackLoop:
         stmt = select(Gap).where(Gap.used == False, Gap.gap_type == "negative_result")  # noqa: E712
         unused_gaps = (await db.execute(stmt)).scalars().all()
 
+        if task_id:
+            from app.api.routes.tasks import update_task_status
+
+            update_task_status(
+                task_id,
+                "running",
+                progress=55,
+                message=f"Loaded {len(unused_gaps)} feedback gaps",
+            )
+
         new_hypotheses = 0
-        for gap in unused_gaps:
+        total_gaps = max(len(unused_gaps), 1)
+        for index, gap in enumerate(unused_gaps, start=1):
             # Find the original hypothesis that spawned this gap
             parent_hyp = await self._find_parent_hypothesis(gap, db)
 
@@ -56,9 +81,24 @@ class FeedbackLoop:
             hypothesis = await self._generate_from_gap(gap, parent_hyp, db)
             if hypothesis:
                 new_hypotheses += 1
+                gap.used = True
+            else:
+                logger.info(
+                    "feedback_gap_retained_for_retry",
+                    gap_id=str(gap.id),
+                    gap_type=gap.gap_type,
+                )
 
-            # Mark gap as used
-            gap.used = True
+            if task_id:
+                from app.api.routes.tasks import update_task_status
+
+                progress = 55 + int((index / total_gaps) * 40)
+                update_task_status(
+                    task_id,
+                    "running",
+                    progress=min(progress, 95),
+                    message=f"Generated {new_hypotheses} feedback hypotheses",
+                )
 
         if unused_gaps:
             await db.commit()
@@ -77,6 +117,13 @@ class FeedbackLoop:
         self, gap: Gap, db: AsyncSession
     ) -> HypothesisModel | None:
         """Find the parent hypothesis that this gap derived from."""
+        marker_match = re.match(
+            r"^\[parent_hypothesis:([0-9a-fA-F-]{36})\]\s*",
+            gap.gap_description or "",
+        )
+        if marker_match:
+            return await db.get(HypothesisModel, marker_match.group(1))
+
         if not gap.source_paper_ids:
             return None
 
@@ -104,7 +151,11 @@ class FeedbackLoop:
 
         # Build gap dict compatible with HypothesisGenerator
         gap_dict = {
-            "description": gap.gap_description,
+            "description": re.sub(
+                r"^\[parent_hypothesis:[0-9a-fA-F-]{36}\]\s*",
+                "",
+                gap.gap_description,
+            ),
             "source_paper_ids": gap.source_paper_ids or [],
             "gap_type": gap.gap_type,
         }
@@ -125,21 +176,15 @@ class FeedbackLoop:
         hypothesis = await self.generator.generate(gap_dict, source_atoms, db)
 
         if hypothesis and parent_hyp:
-            # Update the persisted hypothesis with parent info
-            from app.db.models import HypothesisModel as HM
-            import uuid
-
-            stmt = select(HM).where(HM.id == uuid.UUID(hypothesis.id))
-            hyp_model = (await db.execute(stmt)).scalars().first()
-            if hyp_model:
-                hyp_model.parent_hypothesis_id = str(parent_hyp.id)
-                hyp_model.iteration_count = parent_hyp.iteration_count + 1
-                await db.commit()
-                logger.info(
-                    "feedback_hypothesis_linked",
-                    new_id=hypothesis.id,
-                    parent_id=str(parent_hyp.id),
-                    iteration=hyp_model.iteration_count,
-                )
+            hypothesis.parent_hypothesis_id = str(parent_hyp.id)
+            hypothesis.iteration_count = parent_hyp.iteration_count + 1
+            await db.commit()
+            await db.refresh(hypothesis)
+            logger.info(
+                "feedback_hypothesis_linked",
+                new_id=str(hypothesis.id),
+                parent_id=str(parent_hyp.id),
+                iteration=hypothesis.iteration_count,
+            )
 
         return hypothesis

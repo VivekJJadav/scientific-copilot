@@ -3,6 +3,7 @@
 import { useCallback, useRef } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useAppStore } from '@/lib/store/appStore'
+import { getApiErrorMessage } from '@/lib/api/errors'
 import { ingestPapers } from '@/lib/api/papers'
 import { runExtraction } from '@/lib/api/hypotheses'
 import { runClustering } from '@/lib/api/clusters'
@@ -258,8 +259,7 @@ export function useStageRunner() {
         await queryClient.invalidateQueries()
         return { ...stageResult, elapsedMs }
       } catch (error) {
-        const message =
-          error instanceof Error ? error.message : 'An unknown error occurred'
+        const message = getApiErrorMessage(error)
         return { success: false, message }
       } finally {
         runLockRef.current = false

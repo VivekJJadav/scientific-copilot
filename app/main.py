@@ -1,8 +1,10 @@
 from fastapi import FastAPI
 # Reload fix
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 import structlog
 import logging
+from sqlalchemy.exc import OperationalError
 
 structlog.configure(
     processors=[
@@ -21,6 +23,7 @@ structlog.configure(
 
 from app.api.routes import ingest, papers, hypotheses, debate, review, experiments
 from app.api.routes import feedback, clustering, tasks
+from app.api.error_messages import describe_runtime_error
 from app.api.routes import admin
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
@@ -33,6 +36,9 @@ def verify_credentials(
     request: Request,
     credentials: HTTPBasicCredentials | None = Depends(security),
 ):
+    if request.url.path == "/health":
+        return "healthcheck"
+
     api_key = request.headers.get("x-api-key") or request.query_params.get("api_key")
     if api_key and secrets.compare_digest(api_key, settings.API_KEY):
         return "api_key"
@@ -79,6 +85,29 @@ app.include_router(clustering.router, prefix="/clustering", tags=["clustering"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
 app.include_router(tasks.router, prefix="/tasks", tags=["tasks"])
 app.include_router(tasks.router, prefix="/pipeline", tags=["pipeline"])
+
+
+def _service_unavailable_response(exc: Exception):
+    return JSONResponse(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        content={"detail": describe_runtime_error(exc, settings.DATABASE_URL)},
+    )
+
+
+@app.exception_handler(OperationalError)
+async def handle_operational_error(_: Request, exc: OperationalError):
+    return _service_unavailable_response(exc)
+
+
+@app.exception_handler(OSError)
+async def handle_os_error(_: Request, exc: OSError):
+    if "5432" in str(exc) or "connection refused" in str(exc).lower():
+        return _service_unavailable_response(exc)
+
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"detail": str(exc) or "Internal Server Error"},
+    )
 
 
 @app.get("/health")

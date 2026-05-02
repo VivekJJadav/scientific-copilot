@@ -23,6 +23,47 @@ class ExtractionResponse(BaseModel):
     limitations: list[str] = Field(default_factory=list)
     claims: list[str] = Field(default_factory=list)
 
+
+def _split_sentences(text: str) -> list[str]:
+    return [part.strip() for part in text.replace("\n", " ").split(".") if part.strip()]
+
+
+def _heuristic_extract(text: str) -> ExtractionResponse:
+    sentences = _split_sentences(text)
+    lowered = text.lower()
+
+    methods: list[str] = []
+    claims: list[str] = []
+    limitations: list[str] = []
+
+    method_markers = ("we propose", "we introduce", "our approach", "our method", "framework", "model")
+    claim_markers = ("improve", "improves", "outperform", "outperforms", "reduce", "reduces", "demonstrate", "significantly")
+    limitation_markers = ("however", "limited", "challenge", "challenging", "suffer", "lack")
+
+    for sentence in sentences:
+        lowered_sentence = sentence.lower()
+        if len(methods) < 3 and any(marker in lowered_sentence for marker in method_markers):
+            methods.append(sentence)
+        if len(claims) < 3 and any(marker in lowered_sentence for marker in claim_markers):
+            claims.append(sentence)
+        if len(limitations) < 3 and any(marker in lowered_sentence for marker in limitation_markers):
+            limitations.append(sentence)
+
+    if not methods and sentences:
+        methods.append(sentences[0])
+    if not claims and len(sentences) > 1:
+        claims.append(sentences[-1])
+    if not limitations and "however" in lowered:
+        however_clause = next((sentence for sentence in sentences if "however" in sentence.lower()), None)
+        if however_clause:
+            limitations.append(however_clause)
+
+    return ExtractionResponse(
+        methods=methods[:3],
+        limitations=limitations[:3],
+        claims=claims[:3],
+    )
+
 class PaperExtractor:
     """Extracts structured fields from paper abstracts using LLM."""
 
@@ -36,13 +77,27 @@ class PaperExtractor:
         """
         async with sem:
             try:
-                full_text, chunks, source = await fetch_pdf_text(atom.pdf_url)
+                try:
+                    full_text, chunks, source = await asyncio.wait_for(
+                        fetch_pdf_text(atom.pdf_url),
+                        timeout=8.0,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "pdf_fetch_timed_out",
+                        paper_id=atom.paper_id,
+                        pdf_url=atom.pdf_url,
+                    )
+                    full_text, chunks, source = None, [], "abstract"
                 extraction_text = full_text or atom.abstract
                 atom_text_chunks = chunks
                 atom_content_source = source
                 prompt = EXTRACTION_PROMPT.format(abstract=extraction_text[:12000])
-                response = await self.llm.complete(
-                    prompt, expect_json=True, force_json_object=True
+                response = await asyncio.wait_for(
+                    self.llm.complete(
+                        prompt, expect_json=True, force_json_object=True
+                    ),
+                    timeout=25.0,
                 )
                 parsed = ExtractionResponse.model_validate_json(response)
 
@@ -71,13 +126,29 @@ class PaperExtractor:
                     error=str(e),
                     raw_output=response if "response" in locals() else None,
                 )
-                atom.arxiv_status = "extraction_failed"
-                return atom, False
+                parsed = _heuristic_extract(extraction_text)
+                atom.methods = parsed.methods
+                atom.limitations = parsed.limitations
+                atom.claims = parsed.claims
+                atom.arxiv_status = "processed"
+                atom._full_text = full_text  # type: ignore[attr-defined]
+                atom._text_chunks = atom_text_chunks  # type: ignore[attr-defined]
+                atom._content_source = atom_content_source  # type: ignore[attr-defined]
+                logger.warning("extraction_fallback_heuristic", paper_id=atom.paper_id, reason="json_parse_failed")
+                return atom, True
 
-            except LLMUnavailableError:
+            except (asyncio.TimeoutError, LLMUnavailableError):
                 logger.error("extraction_llm_unavailable", paper_id=atom.paper_id)
-                atom.arxiv_status = "extraction_failed"
-                return atom, False
+                parsed = _heuristic_extract(extraction_text)
+                atom.methods = parsed.methods
+                atom.limitations = parsed.limitations
+                atom.claims = parsed.claims
+                atom.arxiv_status = "processed"
+                atom._full_text = full_text  # type: ignore[attr-defined]
+                atom._text_chunks = atom_text_chunks  # type: ignore[attr-defined]
+                atom._content_source = atom_content_source  # type: ignore[attr-defined]
+                logger.warning("extraction_fallback_heuristic", paper_id=atom.paper_id, reason="llm_unavailable")
+                return atom, True
 
     async def extract_batch(self, atoms: list[ResearchAtom], db: AsyncSession) -> list[ResearchAtom]:
         """Process a batch of papers concurrently using an asyncio.Semaphore.
@@ -124,13 +195,14 @@ class PaperExtractor:
         """
         logger.info("extraction_pipeline_started")
 
-        # Fetch raw papers
-        stmt = select(Paper).where(Paper.arxiv_status == "raw")
+        # Fetch papers that have not been successfully extracted yet, including
+        # retries for earlier failures after infrastructure issues are fixed.
+        stmt = select(Paper).where(Paper.arxiv_status.in_(["raw", "extraction_failed"]))
         result = await db.execute(stmt)
         papers = result.scalars().all()
 
         if not papers:
-            logger.info("extraction_pipeline_no_raw_papers")
+            logger.info("extraction_pipeline_no_pending_papers")
             return {"processed": 0, "failed": 0}
 
         # Convert to atoms

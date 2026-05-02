@@ -57,6 +57,7 @@ class Settings(BaseSettings):
     GAP_SIMILARITY_THRESHOLD: float = 0.75
     FEEDBACK_MIN_EXPERIMENTS: int = 1
     ARBITER_FEW_SHOT_LIMIT: int = 5
+    DEBATE_HISTORY_MAX_DEPTH: int = 3
     DATASET_MIN_MENTIONS: int = 2
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")

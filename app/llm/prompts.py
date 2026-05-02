@@ -60,7 +60,7 @@ NOVELTY_CHECK_PROMPT = """You are a research reviewer. Given this new hypothesis
 New hypothesis: {hypothesis_title} — {core_claim}
 
 Existing hypotheses:
-{existing_titles}
+{existing_hypotheses}
 
 Novelty score rules:
 - 1.0: completely new idea, no overlap with existing
@@ -136,7 +136,9 @@ Respond in JSON only:
   "final_feasibility_score": 0.0,
   "surviving_risks": ["...", "..."],
   "rejection_reason": "..." | null,
-  "arbiter_notes": "..."
+  "arbiter_notes": "...",
+  "key_objections": ["1-sentence distilled objection", "..."],
+  "addressed_prior_objections": ["which prior objections were resolved", "..."]
 }}"""
 
 # ─── Phase 4 Prompts ───────────────────────────────────────────────────────────
@@ -198,6 +200,19 @@ Use these examples to inform your scoring — hypotheses similar to validated on
 
 """
 
+ARBITER_HISTORY_PREFIX = """⚠️ PRIOR DEBATE HISTORY — This hypothesis descends from previously rejected work.
+Review the following rejection chain before evaluating:
+
+{debate_history}
+
+When evaluating this hypothesis:
+- Check if the SPECIFIC objections from prior debates have been addressed
+- Do NOT re-accept claims that were already rejected unless new evidence is provided
+- If the same weakness persists, escalate severity
+- In your response, list which prior objections were addressed in "addressed_prior_objections"
+
+"""
+
 
 def build_arbiter_prompt_with_examples(
     hypothesis_title: str,
@@ -209,9 +224,19 @@ def build_arbiter_prompt_with_examples(
     rebuttals: list[str],
     hardware_requirement: str,
     few_shot_examples: list[dict],
+    debate_history: str = "",
 ) -> str:
-    """Build the full Arbiter prompt, prepending few-shot prefix only when examples exist."""
-    prefix = ""
+    """Build the full Arbiter prompt.
+
+    Layers: debate history → few-shot examples → base prompt.
+    """
+    parts = []
+
+    # Layer 1: ancestor debate history (if this is a child hypothesis)
+    if debate_history:
+        parts.append(ARBITER_HISTORY_PREFIX.format(debate_history=debate_history))
+
+    # Layer 2: few-shot calibration examples from past experiments
     if few_shot_examples:
         examples_block = ""
         for ex in few_shot_examples:
@@ -221,8 +246,9 @@ def build_arbiter_prompt_with_examples(
                 f"  Outcome: {ex.get('outcome', 'N/A')}\n"
                 f"  Summary: {ex.get('result_summary', 'N/A')}\n\n"
             )
-        prefix = ARBITER_FEW_SHOT_PREFIX.format(few_shot_examples=examples_block)
+        parts.append(ARBITER_FEW_SHOT_PREFIX.format(few_shot_examples=examples_block))
 
+    # Layer 3: base arbiter prompt with current debate
     base = ARBITER_PROMPT.format(
         hypothesis_title=hypothesis_title,
         core_claim=core_claim,
@@ -233,4 +259,6 @@ def build_arbiter_prompt_with_examples(
         rebuttals="\n\n".join(rebuttals),
         hardware_requirement=hardware_requirement,
     )
-    return prefix + base
+    parts.append(base)
+
+    return "".join(parts)

@@ -35,7 +35,7 @@ class DatasetExtractor:
         summary = {"datasets_found": 0, "new_entries": 0, "updated_entries": 0}
 
         # Collect all dataset mentions across papers
-        dataset_papers: dict[str, list[str]] = {}  # dataset_name -> [arxiv_ids]
+        dataset_papers: dict[str, set[str]] = {}  # dataset_name -> unique arxiv_ids
 
         for paper in papers:
             datasets = await self._extract_one(paper)
@@ -43,7 +43,7 @@ class DatasetExtractor:
                 ds_lower = ds.strip()
                 if not ds_lower:
                     continue
-                dataset_papers.setdefault(ds_lower, []).append(paper.arxiv_id)
+                dataset_papers.setdefault(ds_lower, set()).add(paper.arxiv_id)
                 summary["datasets_found"] += 1
 
         # Upsert to registry
@@ -52,18 +52,19 @@ class DatasetExtractor:
             existing = (await db.execute(stmt_existing)).scalars().first()
 
             if existing:
-                existing.mention_count += len(arxiv_ids)
-                # Merge paper_ids
                 current_ids = set(existing.paper_ids or [])
-                current_ids.update(arxiv_ids)
-                existing.paper_ids = list(current_ids)
-                summary["updated_entries"] += 1
+                new_ids = set(arxiv_ids) - current_ids
+                if new_ids:
+                    current_ids.update(new_ids)
+                    existing.paper_ids = list(current_ids)
+                    existing.mention_count = len(current_ids)
+                    summary["updated_entries"] += 1
             else:
                 if len(arxiv_ids) >= settings.DATASET_MIN_MENTIONS:
                     entry = DatasetRegistry(
                         name=ds_name,
                         mention_count=len(arxiv_ids),
-                        paper_ids=list(set(arxiv_ids)),
+                        paper_ids=sorted(arxiv_ids),
                     )
                     db.add(entry)
                     summary["new_entries"] += 1
@@ -81,11 +82,13 @@ class DatasetExtractor:
         prompt = DATASET_EXTRACTION_PROMPT.format(
             title=paper.title,
             abstract=paper.abstract,
-            methods="(extracted from abstract)",
+            methods=", ".join(paper.methods or []) or "(methods not extracted)",
         )
 
         try:
-            response = await self.llm.complete(prompt, expect_json=True)
+            response = await self.llm.complete(
+                prompt, expect_json=True, force_json_object=True
+            )
             parsed = DatasetExtractionResponseSchema.model_validate_json(response)
             return [str(d) for d in parsed.datasets if d]
         except ValidationError as e:

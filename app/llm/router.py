@@ -95,7 +95,11 @@ class LLMRouter:
         # Try fallback
         if self.fallback_provider == "groq" and self.fallback_api_key:
             try:
-                result = await self._call_groq(prompt)
+                result = await self._call_groq(
+                    prompt,
+                    expect_json=expect_json,
+                    force_json_object=force_json_object,
+                )
                 if expect_json:
                     result = self._strip_code_fences(result)
                 return result
@@ -154,16 +158,39 @@ class LLMRouter:
         )
         return result
 
-    async def _call_groq(self, prompt: str) -> str:
+    async def _call_groq(
+        self,
+        prompt: str,
+        expect_json: bool = False,
+        force_json_object: bool = False,
+    ) -> str:
         """Call Groq as a fallback provider."""
         from groq import AsyncGroq
 
         start = time.monotonic()
         client = AsyncGroq(api_key=self.fallback_api_key)
-        chat_completion = await client.chat.completions.create(
-            messages=[{"role": "user", "content": prompt}],
-            model="llama-3.1-8b-instant",
-        )
+        create_kwargs = {
+            "messages": [{"role": "user", "content": prompt}],
+            "model": "llama-3.1-8b-instant",
+        }
+        if expect_json or force_json_object:
+            create_kwargs["response_format"] = {"type": "json_object"}
+
+        try:
+            chat_completion = await client.chat.completions.create(**create_kwargs)
+        except Exception as e:
+            if "response_format" not in create_kwargs:
+                raise
+
+            logger.warning(
+                "groq_json_mode_failed",
+                error=str(e),
+                model="llama-3.1-8b-instant",
+            )
+            create_kwargs.pop("response_format", None)
+            chat_completion = await client.chat.completions.create(
+                **create_kwargs
+            )
         result = chat_completion.choices[0].message.content or ""
 
         latency_ms = int((time.monotonic() - start) * 1000)

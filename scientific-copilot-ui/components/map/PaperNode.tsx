@@ -85,7 +85,7 @@ function PaperNodeComponent({ data }: NodeProps) {
         <StatusBadge status={d.arxivStatus} size="sm" />
         {d.arxivStatus === 'extraction_failed' && (
           <p className="mt-1 text-[7px] font-mono uppercase tracking-[0.08em] text-signal-red/85">
-            ollama unreachable
+            extraction failed
           </p>
         )}
       </div>

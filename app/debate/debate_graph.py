@@ -29,7 +29,11 @@ def build_debate_graph():
     
     return workflow.compile()
 
-async def run_debate(hypothesis: HypothesisModel, source_papers: list[ResearchAtom]) -> DebateState:
+async def run_debate(
+    hypothesis: HypothesisModel,
+    source_papers: list[ResearchAtom],
+    debate_history: str = "",
+) -> DebateState:
     graph = build_debate_graph()
     
     initial_state: DebateState = {
@@ -42,7 +46,8 @@ async def run_debate(hypothesis: HypothesisModel, source_papers: list[ResearchAt
         "round": 0,
         "arbiter_verdict": None,
         "final_hypothesis": None,
-        "rejection_reason": None
+        "rejection_reason": None,
+        "debate_history": debate_history,
     }
     
     # LangGraph returns the final state

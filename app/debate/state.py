@@ -13,3 +13,5 @@ class DebateState(TypedDict):
     arbiter_verdict: Optional[str]
     final_hypothesis: Optional[HypothesisModel]
     rejection_reason: Optional[str]
+    debate_history: str  # formatted ancestor debate context for arbiter
+

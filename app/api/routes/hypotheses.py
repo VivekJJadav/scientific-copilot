@@ -13,15 +13,21 @@ from app.schemas.hypothesis import HypothesisListResponse, HypothesisResponse
 from app.extraction.extractor import PaperExtractor
 from app.extraction.embedder import get_embedder
 from app.reasoning.hypothesis_generator import HypothesisGenerator
-from app.api.routes.tasks import create_task, run_in_background
+from app.api.routes.tasks import create_task, run_in_background, update_task_status
 from app.api.rate_limit import rate_limit
 
 router = APIRouter()
 
 
-async def _run_extraction_task(db: AsyncSession):
+async def _run_extraction_task(db: AsyncSession, task_id: str | None = None):
+    if task_id:
+        update_task_status(task_id, "running", progress=15, message="Extracting structured paper fields")
+
     extractor = PaperExtractor()
     extraction_result = await extractor.run_extraction_pipeline(db)
+
+    if task_id:
+        update_task_status(task_id, "running", progress=75, message="Embedding processed papers")
 
     embedder = get_embedder()
     embed_result = await embedder.embed_papers(db)
@@ -41,9 +47,12 @@ async def run_extraction(
     background_tasks.add_task(run_in_background, task_id, _run_extraction_task)
     return {"task_id": task_id, "status": "queued"}
 
-async def _generate_hypotheses_task(db: AsyncSession):
+async def _generate_hypotheses_task(db: AsyncSession, task_id: str | None = None):
+    if task_id:
+        update_task_status(task_id, "running", progress=15, message="Collecting gaps and generating hypotheses")
+
     generator = HypothesisGenerator()
-    return await generator.run_generation_pipeline(db)
+    return await generator.run_generation_pipeline(db, task_id=task_id)
 
 @router.post("/hypotheses/generate")
 async def generate_hypotheses(

@@ -8,6 +8,7 @@ from app.db.session import get_session
 router = APIRouter()
 
 TABLES_TO_CLEAR = (
+    "pipeline_tasks",
     "experiment_results",
     "experiments",
     "hypotheses",

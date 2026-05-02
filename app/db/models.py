@@ -89,6 +89,21 @@ class Experiment(SQLModel, table=True):
     created_at: datetime = Field(default_factory=_utcnow, sa_column=Column(DateTime(timezone=True), nullable=False))
 
 
+class PipelineTask(SQLModel, table=True):
+    __tablename__ = "pipeline_tasks"
+
+    id: str = Field(primary_key=True, nullable=False)
+    step: Optional[str] = Field(default=None, sa_column=Column(String, nullable=True))
+    status: str = Field(default="queued", nullable=False, index=True)
+    progress: int = Field(default=0, sa_column=Column(Integer, nullable=False))
+    message: str = Field(default="Queued", sa_column=Column(Text, nullable=False))
+    result: Optional[dict[str, Any]] = Field(default=None, sa_column=Column(JSONB))
+    error: Optional[str] = Field(default=None, sa_column=Column(Text))
+    history: List[dict[str, Any]] = Field(default_factory=list, sa_column=Column(JSONB, nullable=False))
+    created_at: datetime = Field(default_factory=_utcnow, sa_column=Column(DateTime(timezone=True), nullable=False))
+    updated_at: datetime = Field(default_factory=_utcnow, sa_column=Column(DateTime(timezone=True), nullable=False, onupdate=_utcnow))
+
+
 class PaperCluster(SQLModel, table=True):
     __tablename__ = "paper_clusters"
 
@@ -110,6 +125,23 @@ class ExperimentResult(SQLModel, table=True):
     metrics: dict = Field(default_factory=dict, sa_column=Column(JSONB))
     result_summary: str = Field(sa_column=Column(Text, nullable=False))
     lessons_learned: List[str] = Field(default_factory=list, sa_column=Column(JSONB))
+    created_at: datetime = Field(default_factory=_utcnow, sa_column=Column(DateTime(timezone=True), nullable=False))
+
+
+class DebateHistory(SQLModel, table=True):
+    __tablename__ = "debate_history"
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    hypothesis_id: uuid.UUID = Field(foreign_key="hypotheses.id", nullable=False, index=True)
+    verdict: str = Field(nullable=False)  # PASS | FAIL
+    rejection_reason: Optional[str] = Field(default=None, sa_column=Column(Text))
+    objections: List[str] = Field(default_factory=list, sa_column=Column(JSONB))
+    rebuttals: List[str] = Field(default_factory=list, sa_column=Column(JSONB))
+    surviving_risks: List[str] = Field(default_factory=list, sa_column=Column(JSONB))
+    arbiter_notes: Optional[str] = Field(default=None, sa_column=Column(Text))
+    final_novelty_score: float = Field(default=0.0, sa_column=Column(Float, nullable=False))
+    final_feasibility_score: float = Field(default=0.0, sa_column=Column(Float, nullable=False))
+    addressed_prior_objections: List[str] = Field(default_factory=list, sa_column=Column(JSONB))
     created_at: datetime = Field(default_factory=_utcnow, sa_column=Column(DateTime(timezone=True), nullable=False))
 
 

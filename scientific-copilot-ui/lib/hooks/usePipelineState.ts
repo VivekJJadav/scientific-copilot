@@ -40,6 +40,8 @@ export interface PipelineState {
     clusters: number
     hypotheses: number
     debatedHypotheses: number
+    reviewableHypotheses: number
+    undebatedHypotheses: number
     pendingHypotheses: number
     approvedHypotheses: number
     experiments: number
@@ -75,7 +77,7 @@ const STAGE_PROMPTS: Record<Stage, StageAction> = {
     endpoint: 'POST /debate/run-all',
   },
   review: {
-    text: 'Hypotheses passed debate — ready for your review',
+    text: 'Debated hypotheses are ready for your review',
     action: 'Review →',
     handler: 'openReviewDrawer',
   },
@@ -141,6 +143,14 @@ export function usePipelineState(): PipelineState {
       (h) => h.debate_rounds !== null && h.debate_rounds > 0
     ).length
 
+    const reviewableHypotheses = hypotheses.filter(
+      (h) => h.status === 'pending' && h.debate_rounds !== null && h.debate_rounds > 0
+    ).length
+
+    const undebatedHypotheses = hypotheses.filter(
+      (h) => h.status === 'pending' && (h.debate_rounds === null || h.debate_rounds === 0)
+    ).length
+
     const pendingHypotheses = hypotheses.filter(
       (h) => h.status === 'pending'
     ).length
@@ -164,6 +174,8 @@ export function usePipelineState(): PipelineState {
       clusters: clusters.length,
       hypotheses: hypotheses.length,
       debatedHypotheses,
+      reviewableHypotheses,
+      undebatedHypotheses,
       pendingHypotheses,
       approvedHypotheses,
       experiments: experiments.length,
@@ -178,11 +190,9 @@ export function usePipelineState(): PipelineState {
     if (counts.clusters === 0) return 'cluster'
     if (counts.hypotheses === 0) return 'hypothesize'
     
-    // In 'debate' stage if we have hypotheses but none have been debated yet
-    if (counts.debatedHypotheses === 0) return 'debate'
-    
-    // In 'review' stage if there are ANY pending hypotheses
-    if (counts.pendingHypotheses > 0) return 'review'
+    if (counts.undebatedHypotheses > 0) return 'debate'
+
+    if (counts.reviewableHypotheses > 0) return 'review'
     
     // In 'run' stage if we have approved hypotheses but haven't finished experiments
     if (counts.approvedHypotheses > 0 && counts.completedExperiments < counts.approvedHypotheses) return 'run'

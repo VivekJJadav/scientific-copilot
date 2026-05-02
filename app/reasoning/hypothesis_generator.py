@@ -49,7 +49,11 @@ class HypothesisGenerator:
         self.embedder = get_embedder()
 
     async def generate(
-        self, gap: dict, source_atoms: list[ResearchAtom], db: AsyncSession
+        self,
+        gap: dict,
+        source_atoms: list[ResearchAtom],
+        db: AsyncSession,
+        skip_novelty_check: bool = False,
     ) -> HypothesisModel | None:
         """Generate a single hypothesis from a gap and source papers.
 
@@ -116,9 +120,16 @@ class HypothesisGenerator:
                 created_at=datetime.now(UTC),
             )
 
-            # Run novelty check against existing hypotheses
-            novelty_score = await self._check_novelty(hypothesis, db)
-            hypothesis.novelty_score = novelty_score  # Override self-assessed score
+            if skip_novelty_check:
+                logger.info(
+                    "novelty_check_skipped",
+                    hypothesis_id=hypothesis.id,
+                    title=hypothesis.title,
+                )
+            else:
+                # Run novelty check against existing hypotheses
+                novelty_score = await self._check_novelty(hypothesis, db)
+                hypothesis.novelty_score = novelty_score  # Override self-assessed score
 
             # Check thresholds
             if not hypothesis.passes_threshold(
@@ -160,7 +171,11 @@ class HypothesisGenerator:
             )
             return None
 
-    async def run_generation_pipeline(self, db: AsyncSession) -> dict:
+    async def run_generation_pipeline(
+        self,
+        db: AsyncSession,
+        task_id: str | None = None,
+    ) -> dict:
         """Full pipeline: fetch gaps → generate hypotheses.
 
         Prioritizes unused gaps from the gaps table, then falls back to
@@ -170,14 +185,37 @@ class HypothesisGenerator:
             Summary dict: {"gaps_found": n, "hypotheses_generated": n, "hypotheses_discarded": n}
         """
         logger.info("hypothesis_generation_pipeline_started")
+        if task_id:
+            from app.api.routes.tasks import update_task_status
+
+            update_task_status(
+                task_id,
+                "running",
+                progress=20,
+                message="Embedding papers before hypothesis generation",
+            )
 
         # First, embed any processed papers that haven't been embedded yet
         embed_result = await self.embedder.embed_papers(db)
         logger.info("embedding_step_complete", **embed_result)
 
+        if task_id:
+            from app.api.routes.tasks import update_task_status
+
+            update_task_status(
+                task_id,
+                "running",
+                progress=28,
+                message="Scanning saved gaps and extracting new gap candidates",
+            )
+
         # Fetch unused gaps from DB first (these come from clustering + feedback)
         stmt = select(Gap).where(Gap.used == False).limit(20)  # noqa: E712
         db_gaps = (await db.execute(stmt)).scalars().all()
+
+        existing_gap_descriptions = set(
+            (await db.execute(select(Gap.gap_description))).scalars().all()
+        )
 
         # Convert DB gaps to dicts
         gaps = []
@@ -200,19 +238,73 @@ class HypothesisGenerator:
             papers = result.scalars().all()
 
             if papers:
+                if task_id:
+                    from app.api.routes.tasks import update_task_status
+
+                    update_task_status(
+                        task_id,
+                        "running",
+                        progress=32,
+                        message="Analyzing papers to surface missing research gaps",
+                    )
+
                 atoms = [ResearchAtom.from_paper(p) for p in papers]
                 extracted_gaps = await self.gap_extractor.extract_gaps(atoms, settings.ARXIV_QUERY)
 
                 # Also find cluster-aware gaps
+                if task_id:
+                    from app.api.routes.tasks import update_task_status
+
+                    update_task_status(
+                        task_id,
+                        "running",
+                        progress=36,
+                        message="Ranking cluster-based gap candidates",
+                    )
+
                 cluster_gaps = await self.gap_extractor.find_gaps_from_clusters(db)
-                gaps.extend(cluster_gaps)
-                gaps.extend(extracted_gaps)
+                for discovered_gap in [*cluster_gaps, *extracted_gaps]:
+                    description = discovered_gap.get("description", "").strip()
+                    if not description:
+                        continue
+
+                    if description not in existing_gap_descriptions:
+                        gap_model = Gap(
+                            gap_type=discovered_gap.get("gap_type", "unknown"),
+                            gap_description=description,
+                            source_paper_ids=discovered_gap.get("source_paper_ids", []),
+                            cluster_id=discovered_gap.get("cluster_id"),
+                            similarity=discovered_gap.get("similarity", 0.0),
+                            used=False,
+                        )
+                        db.add(gap_model)
+                        gap_models[description] = gap_model
+                        existing_gap_descriptions.add(description)
+                    elif description not in gap_models:
+                        existing_gap = await db.execute(
+                            select(Gap).where(Gap.gap_description == description)
+                        )
+                        gap_model = existing_gap.scalars().first()
+                        if gap_model:
+                            gap_models[description] = gap_model
+
+                    gaps.append(discovered_gap)
 
         summary = {
             "gaps_found": len(gaps),
             "hypotheses_generated": 0,
             "hypotheses_discarded": 0,
         }
+
+        if task_id:
+            from app.api.routes.tasks import update_task_status
+
+            update_task_status(
+                task_id,
+                "running",
+                progress=40,
+                message=f"Collected {summary['gaps_found']} candidate gaps",
+            )
 
         if not gaps:
             logger.info("hypothesis_pipeline_no_gaps")
@@ -225,15 +317,40 @@ class HypothesisGenerator:
         all_papers = (await db.execute(all_papers_stmt)).scalars().all()
         all_atoms = [ResearchAtom.from_paper(p) for p in all_papers]
 
-        # Generate hypotheses for up to 10 gaps to yield more hypotheses
-        for gap in gaps[:10]:
+        # Generate hypotheses for a few top gaps to keep the demo flow responsive.
+        selected_gaps = gaps[:3]
+        total_selected = max(len(selected_gaps), 1)
+        for index, gap in enumerate(selected_gaps, start=1):
             # Find source atoms for this gap
             source_ids = gap.get("source_paper_ids", [])
             source_atoms = [a for a in all_atoms if a.paper_id in source_ids]
             if not source_atoms:
-                source_atoms = all_atoms[:5]  # fallback: use first 5
+                source_atoms = sorted(
+                    all_atoms,
+                    key=lambda atom: (
+                        len(atom.limitations) + len(atom.claims) + len(atom.methods),
+                        atom.published_year,
+                    ),
+                    reverse=True,
+                )[:5]
 
-            hypothesis = await self.generate(gap, source_atoms, db)
+            if task_id:
+                from app.api.routes.tasks import update_task_status
+
+                draft_progress = 40 + int(((index - 1) / total_selected) * 45)
+                update_task_status(
+                    task_id,
+                    "running",
+                    progress=min(draft_progress, 90),
+                    message=f"Drafting hypothesis {index} of {total_selected}",
+                )
+
+            hypothesis = await self.generate(
+                gap,
+                source_atoms,
+                db,
+                skip_novelty_check=True,
+            )
             if hypothesis:
                 summary["hypotheses_generated"] += 1
                 # Mark the gap as used if it came from DB
@@ -242,6 +359,21 @@ class HypothesisGenerator:
                     gap_models[gap_desc].used = True
             else:
                 summary["hypotheses_discarded"] += 1
+
+            if task_id:
+                from app.api.routes.tasks import update_task_status
+
+                progress = 55 + int((index / total_selected) * 40)
+                update_task_status(
+                    task_id,
+                    "running",
+                    progress=min(progress, 95),
+                    message=(
+                        f"Completed {index} of {total_selected}: "
+                        f"{summary['hypotheses_generated']} kept, "
+                        f"{summary['hypotheses_discarded']} discarded"
+                    ),
+                )
 
         # Commit gap used=true updates
         await db.commit()
@@ -262,22 +394,27 @@ class HypothesisGenerator:
 
     async def _check_novelty(self, hypothesis: HypothesisModel, db: AsyncSession) -> float:
         """Check novelty of a hypothesis against existing ones."""
-        stmt = select(HypothesisModel.title)
+        stmt = select(HypothesisModel.title, HypothesisModel.core_claim)
         result = await db.execute(stmt)
-        existing_titles = result.scalars().all()
+        existing_hypotheses = result.all()
 
-        if not existing_titles:
+        if not existing_hypotheses:
             return hypothesis.novelty_score  # Keep LLM self-assessed score if no existing
 
-        existing_block = "\n".join(f"- {t}" for t in existing_titles)
+        existing_block = "\n".join(
+            f"- {title}: {core_claim}"
+            for title, core_claim in existing_hypotheses
+        )
         prompt = NOVELTY_CHECK_PROMPT.format(
             hypothesis_title=hypothesis.title,
             core_claim=hypothesis.core_claim,
-            existing_titles=existing_block,
+            existing_hypotheses=existing_block,
         )
 
         try:
-            response = await self.llm.complete(prompt, expect_json=True)
+            response = await self.llm.complete(
+                prompt, expect_json=True, force_json_object=True
+            )
             parsed = NoveltyResponseSchema.model_validate_json(response)
             score = float(parsed.novelty_score)
 
